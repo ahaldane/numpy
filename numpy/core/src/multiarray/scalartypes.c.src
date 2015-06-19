@@ -2191,27 +2191,18 @@ voidtype_subscript(PyVoidScalarObject *self, PyObject *ind)
         return NULL;
     }
 
-#if defined(NPY_PY3K)
-    if (PyUString_Check(ind)) {
-#else
-    if (PyBytes_Check(ind) || PyUnicode_Check(ind)) {
-#endif
-        args = Py_BuildValue("(O)", ind);
-        ret = gentype_generic_method((PyObject *)self, args, NULL, "__getitem__");
-        Py_DECREF(args);
-        return ret;
-    }
-
     /* try to convert it to a number */
     n = PyArray_PyIntAsIntp(ind);
-    if (error_converting(n)) {
-        goto fail;
+    if (!error_converting(n)) {
+        return voidtype_item(self, (Py_ssize_t)n);
     }
-    return voidtype_item(self, (Py_ssize_t)n);
+    PyErr_Clear();
 
-fail:
-    PyErr_SetString(PyExc_IndexError, "invalid index");
-    return NULL;
+    /* if it's not a number, try ndarray indexing */
+    args = Py_BuildValue("(O)", ind);
+    ret = gentype_generic_method((PyObject *)self, args, NULL, "__getitem__");
+    Py_DECREF(args);
+    return ret;
 }
 
 static int

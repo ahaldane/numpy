@@ -13,6 +13,7 @@
 #include "npy_pycompat.h"
 #include "numpy/npy_math.h"
 #include "numpy/halffloat.h"
+#include "lowlevel_strided_loops.h"
 
 #include "npy_config.h"
 #include "npy_sort.h"
@@ -755,66 +756,229 @@ VOID_getitem(void *input, void *vap)
 
 NPY_NO_EXPORT int PyArray_CopyObject(PyArrayObject *, PyObject *);
 
+/* Given a structured PyArrayObject arr, index i and structured datatype descr,
+ * modify the dtype of arr to contain a single field corresponding to the ith
+ * field of descr, optionally recompute the alignment flag (if alignflags=1)
+ * and return the offset of the field (in offset_p). Used in VOID_setitem.
+ * Compare to inner loops in VOID_getitem and VOID_nonzero.
+ *
+ * WARNING: Clobbers arr's dtype and alignment flag.
+ *
+ * This is useful in preparation for calling copyswap on individual fields of a
+ * numpy structure, in VOID_setitem.
+ */
+NPY_NO_EXPORT int
+_setupField(int i, PyArray_Descr *descr, PyArrayObject *arr,
+            npy_intp *offset_p){
+    PyObject *key;
+    PyObject *tup;
+    PyArray_Descr *new;
+    npy_intp offset;
+
+    key = PyTuple_GET_ITEM(descr->names, i);
+    tup = PyDict_GetItem(descr->fields, key);
+    if (_unpack_field(tup, &new, &offset) < 0) {
+        return -1;
+    }
+
+    ((PyArrayObject_fields *)(arr))->descr = new;
+    if ((new->alignment > 1) && ((offset % new->alignment) != 0)) {
+        PyArray_CLEARFLAGS(arr, NPY_ARRAY_ALIGNED);
+    }
+    else {
+        PyArray_ENABLEFLAGS(arr, NPY_ARRAY_ALIGNED);
+    }
+
+    *offset_p = offset;
+    return 0;
+}
+
 static int
 VOID_setitem(PyObject *op, void *input, void *vap)
 {
     char *ip = input;
     PyArrayObject *ap = vap;
     PyArray_Descr *descr;
+    int flags;
     int itemsize=PyArray_DESCR(ap)->elsize;
     int res;
+    char *msg_nostruct = "could not interpret value as a structured scalar";
 
     descr = PyArray_DESCR(ap);
-    if (descr->names && PyTuple_Check(op)) {
-        PyObject *key;
-        PyObject *names;
-        int i, n;
-        PyObject *tup;
-        int savedflags;
+    flags = PyArray_FLAGS(ap);
+    if (PyDataType_HASFIELDS(descr)) {
+        /* copy field-by-field in the cases src is:
+         *    tuple
+         *    void scalar with fields
+         *    size-1 array of void type with fields
+         */
+        PyObject *errmsg;
 
-        res = 0;
-        /* get the names from the fields dictionary*/
-        names = descr->names;
-        n = PyTuple_GET_SIZE(names);
-        if (PyTuple_GET_SIZE(op) != n) {
-            PyErr_SetString(PyExc_ValueError,
-                    "size of tuple must match number of fields.");
-            return -1;
-        }
-        savedflags = PyArray_FLAGS(ap);
-        for (i = 0; i < n; i++) {
-            PyArray_Descr *new;
-            npy_intp offset;
-            key = PyTuple_GET_ITEM(names, i);
-            tup = PyDict_GetItem(descr->fields, key);
-            if (_unpack_field(tup, &new, &offset) < 0) {
-                ((PyArrayObject_fields *)ap)->descr = descr;
+        npy_int i, names_size;
+        npy_intp offset;
+
+        PyArray_Descr *srcdescr = NULL;
+        char *srcdata = NULL;
+
+        /* dummy array, which is passed to _setupField so we descr and flags */
+        PyArrayObject_fields dummy_struct;
+        PyArrayObject *dummy = (PyArrayObject *)&dummy_struct;
+
+        /* temporary buffer used to transfer tuples and scalars safely */
+        PyArrayObject *buffer;
+        int bufferflags;
+        char *bufdata;
+        int failed = 0;
+
+        /* If op is numpy object, we can directly get dtype and data ptr */
+        if (PyArray_Check(op)) {
+            PyArrayObject *oparr = (PyArrayObject*)op;
+
+            if (PyArray_SIZE(oparr) != 1) {
+                PyErr_SetString(PyExc_ValueError,
+                        "setting an array element with a sequence.");
+                return -1;
+
+            }
+            if (PyArray_TYPE(oparr) == NPY_OBJECT){
+                return PyArray_SETITEM(vap, input,
+                            PyArray_GETITEM(oparr, PyArray_DATA(oparr)));
+            }
+            if (!PyArray_HASFIELDS(oparr)) {
+                PyErr_SetString(PyExc_TypeError, msg_nostruct);
                 return -1;
             }
-            /*
-             * TODO: temporarily modifying the array like this
-             *       is bad coding style, should be changed.
-             */
-            ((PyArrayObject_fields *)ap)->descr = new;
-            /* remember to update alignment flags */
-            if ((new->alignment > 1)
-                    && ((((npy_intp)(ip+offset)) % new->alignment) != 0)) {
-                PyArray_CLEARFLAGS(ap, NPY_ARRAY_ALIGNED);
+
+            srcdescr = PyArray_DESCR(oparr);
+            srcdata = PyArray_DATA(oparr);
+        }
+        else if (PyArray_IsScalar(op, Void)){
+            srcdescr = ((PyVoidScalarObject*)op)->descr;
+            if (!PyDataType_HASFIELDS(srcdescr)) {
+                PyErr_SetString(PyExc_TypeError, msg_nostruct);
+                return -1;
             }
-            else {
-                PyArray_ENABLEFLAGS(ap, NPY_ARRAY_ALIGNED);
+            srcdata = ((PyVoidScalarObject*)op)->obval;
+        }
+
+        names_size = PyTuple_GET_SIZE(descr->names);
+
+        /* if we found the src dtype above, simply copy and return */
+        if (srcdescr != NULL) {
+            int ret;
+
+            /* Fast path if dtypes are equal */
+            if(PyArray_EquivTypes(srcdescr, descr)){
+                for (i = 0; i < names_size; i++) {
+                    /* neither line will fail, in principle */
+                    if (_setupField(i, descr, dummy, &offset)) {
+                        goto field_fail;
+                    }
+                    PyArray_DESCR(dummy)->f->copyswap(ip + offset,
+                                             srcdata + offset, 0, dummy);
+                }
+                return 0;
             }
-            res = new->f->setitem(PyTuple_GET_ITEM(op, i), ip+offset, ap);
-            ((PyArrayObject_fields *)ap)->flags = savedflags;
-            if (res < 0) {
-                break;
+
+            /* Slow path */
+            ret = PyArray_CastRawArrays(1, srcdata, ip, 0, 0,
+                                        srcdescr, descr, 0);
+            if (ret != NPY_SUCCEED){
+                return -1;
+            }
+            return 0;
+        }
+
+        /* Otherwise it is a tuple or scalar.
+         *
+         * Strategy: to avoid clobbered arrays upon failure, we use two
+         * passes: First, copy+cast using setitem from the tuple to a
+         * buffer with the same dtype as the dst array (which can fail),
+         * then copy from the buffer to the dst (which should not fail).
+         *
+         * Because setitem expects a real array (not just a dummy) we need
+         * to create a buffer array which we then clobber.
+         */
+        Py_INCREF(descr);
+        buffer = (PyArrayObject*)PyArray_NewFromDescr(&PyArray_Type,
+                    descr, 0, NULL, NULL, NULL, flags, NULL);
+        bufferflags = PyArray_FLAGS(buffer);
+        bufdata = PyArray_DATA(buffer);
+
+        if (PyTuple_Check(op)) {
+            /* if it's a tuple, copy field-by-field to buffer, then to dst */
+
+            if(names_size != PyTuple_Size(op)){
+                errmsg = PyUString_FromFormat(
+                        "could not assign tuple of length %d to structure "
+                        "with %d fields.", PyTuple_Size(op), names_size);
+                PyErr_SetObject(PyExc_ValueError, errmsg);
+                Py_DECREF(errmsg);
+                Py_DECREF(buffer);
+                return -1;
+            }
+
+            for (i = 0; i < names_size; i++) {
+                PyObject *item;
+
+                /* temporarily make buffer have only this field */
+                if (_setupField(i, descr, buffer, &offset) == -1) {
+                    failed = 1;
+                    break;
+                }
+                item = PyTuple_GetItem(op, i);
+                if (item == NULL) {
+                    failed = 1;
+                    break;
+                }
+                /* use setitem to set this field */
+                if (PyArray_DESCR(buffer)->f->setitem(item,
+                               bufdata + offset, buffer) < 0) {
+                    failed = 1;
+                    break;
+                }
+            }
+
+        }
+        else{
+            /* Otherwise, must be scalar. Attempt to assign to each field */
+            for (i = 0; i < names_size; i++) {
+                /* temporarily make buffer have only this field */
+                if (_setupField(i, descr, buffer, &offset) == -1) {
+                    failed = 1;
+                    break;
+                }
+                /* use setitem to set this field */
+                if (PyArray_DESCR(buffer)->f->setitem(op,
+                               bufdata + offset, buffer) < 0) {
+                    failed = 1;
+                    break;
+                }
             }
         }
-        ((PyArrayObject_fields *)ap)->descr = descr;
-        return res;
-    }
 
-    if (descr->subarray) {
+        /* reset clobbered arrays before decref of buffer */
+        ((PyArrayObject_fields *)(buffer))->descr = descr;
+        ((PyArrayObject_fields *)(buffer))->flags = bufferflags;
+
+        if (failed) {
+            Py_DECREF(buffer);
+            return -1;
+        }
+
+        /* Now safely copy from buffer to dst */
+        for (i = 0; i < names_size; i++) {
+            if (_setupField(i, descr, dummy, &offset) == -1) {
+                goto field_fail;
+            }
+            PyArray_DESCR(dummy)->f->copyswap(ip + offset, bufdata + offset,
+                                               0, dummy);
+        }
+
+        Py_DECREF(buffer);
+        return 0;
+    }
+    else if (PyDataType_HASSUBARRAY(descr)) {
         /* copy into an array of the same basic type */
         PyArray_Dims shape = {NULL, -1};
         PyArrayObject *ret;
@@ -843,19 +1007,17 @@ VOID_setitem(PyObject *op, void *input, void *vap)
         return res;
     }
 
-    /* Default is to use buffer interface to set item */
+    /*
+     * Fall through case - non-structured void datatype. This is a very
+     * undiscerning case: It interprets any object as a buffer
+     * and reads as many bytes as possible, padding with 0.
+     */
     {
         const void *buffer;
         Py_ssize_t buflen;
-        if (PyDataType_FLAGCHK(descr, NPY_ITEM_HASOBJECT)
-                || PyDataType_FLAGCHK(descr, NPY_ITEM_IS_POINTER)) {
-            PyErr_SetString(PyExc_ValueError,
-                    "Setting void-array with object members using buffer.");
-            return -1;
-        }
         res = PyObject_AsReadBuffer(op, &buffer, &buflen);
         if (res == -1) {
-            goto fail;
+            return -1;
         }
         memcpy(ip, buffer, PyArray_MIN(buflen, itemsize));
         if (itemsize > buflen) {
@@ -864,7 +1026,10 @@ VOID_setitem(PyObject *op, void *input, void *vap)
     }
     return 0;
 
-fail:
+/* this should not happen */
+field_fail:
+    PyErr_SetString(PyExc_TypeError,
+                 "Error: setitem failed; destination may be clobbered.");
     return -1;
 }
 
