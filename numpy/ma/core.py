@@ -1578,7 +1578,11 @@ def make_mask(m, copy=False, shrink=True, dtype=MaskType):
             else:
                 result = m
         else:
-            result = np.array(m, dtype=dtype, copy=copy)
+            # existence of fields implies True
+            if m.dtype.fields and np.dtype(dtype) == np.bool_:
+                result = np.ones(m.shape, dtype=dtype)
+            else:
+                result = np.array(m, dtype=dtype, copy=copy)
     else:
         result = np.array(filled(m, True), dtype=MaskType)
     # Bas les masques !
