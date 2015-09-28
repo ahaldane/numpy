@@ -3171,6 +3171,9 @@ static void _strided_masked_wrapper_transfer_function(
         /* Skip masked values */
         mask = (npy_bool*)npy_memchr((char *)mask, 0, mask_stride, N,
                                      &subloopsize, 1);
+        if (subloopsize >= N) {
+            break;
+        }
         dst += subloopsize * dst_stride;
         src += subloopsize * src_stride;
         N -= subloopsize;
