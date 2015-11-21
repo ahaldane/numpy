@@ -16,11 +16,17 @@ typedef struct {
      */
     PyObject *object;
     /*
-     * Value of an integer index, number of slices an Ellipsis is worth,
-     * -1 if input was an integer array and the original size of the
-     * boolean array if it is a converted boolean array.
+     * For HAS_INTEGER, int_index is the value of the integer index. For
+     * HAS_ELLIPSIS, ellipsis_slices is the number of slices the ellipsis is
+     * worth. For HAS_FANCY, fancy_bool is -1 for an integer array, or the
+     * length of the array for boolean arrays.
      */
-    npy_intp value;
+    union{
+        npy_intp int_index;
+        int ellipsis_slices;
+        npy_intp fancy_bool;
+    };
+
     /* kind of index, see constants in mapping.c */
     int type;
 } npy_index_info;

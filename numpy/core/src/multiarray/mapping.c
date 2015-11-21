@@ -296,7 +296,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
             indices[curr_idx].type = HAS_ELLIPSIS;
             indices[curr_idx].object = NULL;
             /* number of slices it is worth, won't update if it is 0: */
-            indices[curr_idx].value = 0;
+            indices[curr_idx].ellipsis_slices = 0;
 
             ellipsis_pos = curr_idx;
             /* the used and new ndim will be found later */
@@ -356,7 +356,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
                 else {
                     index_type |= HAS_INTEGER;
                     indices[curr_idx].object = NULL;
-                    indices[curr_idx].value = ind;
+                    indices[curr_idx].int_index = ind;
                     indices[curr_idx].type = HAS_INTEGER;
                     used_ndim += 1;
                     new_ndim += 0;
@@ -457,7 +457,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
 
                 index_type |= HAS_FANCY;
                 indices[curr_idx].type = HAS_0D_BOOL;
-                indices[curr_idx].value = 1;
+                indices[curr_idx].fancy_bool = 1;
 
                 /* TODO: This can't fail, right? Is there a faster way? */
                 if (PyObject_IsTrue((PyObject *)arr)) {
@@ -504,7 +504,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
             index_type |= HAS_FANCY;
             for (i=0; i < n; i++) {
                 indices[curr_idx].type = HAS_FANCY;
-                indices[curr_idx].value = PyArray_DIM(arr, i);
+                indices[curr_idx].fancy_bool = PyArray_DIM(arr, i);
                 indices[curr_idx].object = (PyObject *)nonzero_result[i];
 
                 used_ndim += 1;
@@ -536,7 +536,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
                 else {
                     index_type |= (HAS_INTEGER | HAS_SCALAR_ARRAY);
                     indices[curr_idx].object = NULL;
-                    indices[curr_idx].value = ind;
+                    indices[curr_idx].int_index = ind;
                     indices[curr_idx].type = HAS_INTEGER;
                     used_ndim += 1;
                     new_ndim += 0;
@@ -547,7 +547,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
 
             index_type |= HAS_FANCY;
             indices[curr_idx].type = HAS_FANCY;
-            indices[curr_idx].value = -1;
+            indices[curr_idx].fancy_bool = -1;
             indices[curr_idx].object = (PyObject *)arr;
 
             used_ndim += 1;
@@ -583,9 +583,9 @@ prepare_index(PyArrayObject *self, PyObject *index,
      */
     if (used_ndim < PyArray_NDIM(self)) {
        if (index_type & HAS_ELLIPSIS) {
-           indices[ellipsis_pos].value = PyArray_NDIM(self) - used_ndim;
+           indices[ellipsis_pos].ellipsis_slices = PyArray_NDIM(self) - used_ndim;
            used_ndim = PyArray_NDIM(self);
-           new_ndim += indices[ellipsis_pos].value;
+           new_ndim += indices[ellipsis_pos].ellipsis_slices;
        }
        else {
            /*
@@ -595,11 +595,11 @@ prepare_index(PyArrayObject *self, PyObject *index,
            index_type |= HAS_ELLIPSIS;
            indices[curr_idx].object = NULL;
            indices[curr_idx].type = HAS_ELLIPSIS;
-           indices[curr_idx].value = PyArray_NDIM(self) - used_ndim;
+           indices[curr_idx].ellipsis_slices = PyArray_NDIM(self) - used_ndim;
            ellipsis_pos = curr_idx;
 
            used_ndim = PyArray_NDIM(self);
-           new_ndim += indices[curr_idx].value;
+           new_ndim += indices[curr_idx].ellipsis_slices;
            curr_idx += 1;
        }
     }
@@ -658,8 +658,8 @@ prepare_index(PyArrayObject *self, PyObject *index,
          */
         used_ndim = 0;
         for (i = 0; i < curr_idx; i++) {
-            if ((indices[i].type == HAS_FANCY) && indices[i].value > 0) {
-                if (indices[i].value != PyArray_DIM(self, used_ndim)) {
+            if ((indices[i].type == HAS_FANCY) && indices[i].fancy_bool > 0) {
+                if (indices[i].fancy_bool != PyArray_DIM(self, used_ndim)) {
                     static PyObject *warning;
 
                     char err_msg[174];
@@ -668,7 +668,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
                         "dimension %d; dimension is %" NPY_INTP_FMT
                         " but corresponding boolean dimension is %" NPY_INTP_FMT,
                         used_ndim, PyArray_DIM(self, used_ndim),
-                        indices[i].value);
+                        indices[i].fancy_bool);
 
                     npy_cache_import(
                         "numpy", "VisibleDeprecationWarning", &warning);
@@ -684,7 +684,7 @@ prepare_index(PyArrayObject *self, PyObject *index,
             }
 
             if (indices[i].type == HAS_ELLIPSIS) {
-                used_ndim += indices[i].value;
+                used_ndim += indices[i].ellipsis_slices;
             }
             else if ((indices[i].type == HAS_NEWAXIS) ||
                      (indices[i].type == HAS_0D_BOOL)) {
@@ -739,11 +739,11 @@ get_item_pointer(PyArrayObject *self, char **ptr,
     int i;
     *ptr = PyArray_BYTES(self);
     for (i=0; i < index_num; i++) {
-        if ((check_and_adjust_index(&(indices[i].value),
+        if ((check_and_adjust_index(&(indices[i].int_index),
                                PyArray_DIMS(self)[i], i, NULL)) < 0) {
             return -1;
         }
-        *ptr += PyArray_STRIDE(self, i) * indices[i].value;
+        *ptr += PyArray_STRIDE(self, i) * indices[i].int_index;
     }
     return 0;
 }
@@ -782,18 +782,18 @@ get_view_from_index(PyArrayObject *self, PyArrayObject **view,
     for (i=0; i < index_num; i++) {
         switch (indices[i].type) {
             case HAS_INTEGER:
-                if ((check_and_adjust_index(&indices[i].value,
+                if ((check_and_adjust_index(&indices[i].int_index,
                                 PyArray_DIMS(self)[orig_dim], orig_dim,
                                 NULL)) < 0) {
                     return -1;
                 }
-                data_ptr += PyArray_STRIDE(self, orig_dim) * indices[i].value;
+                data_ptr += PyArray_STRIDE(self, orig_dim) * indices[i].int_index;
 
                 new_dim += 0;
                 orig_dim += 1;
                 break;
             case HAS_ELLIPSIS:
-                for (j=0; j < indices[i].value; j++) {
+                for (j=0; j < indices[i].ellipsis_slices; j++) {
                     new_strides[new_dim] = PyArray_STRIDE(self, orig_dim);
                     new_shape[new_dim] = PyArray_DIMS(self)[orig_dim];
                     new_dim += 1;
@@ -1201,9 +1201,9 @@ array_item_asarray(PyArrayObject *self, npy_intp i)
         i -= PyArray_DIM(self, 0);
     }
 
-    indices[0].value = i;
+    indices[0].int_index = i;
     indices[0].type = HAS_INTEGER;
-    indices[1].value = PyArray_NDIM(self) - 1;
+    indices[1].ellipsis_slices = PyArray_NDIM(self) - 1;
     indices[1].type = HAS_ELLIPSIS;
     if (get_view_from_index(self, (PyArrayObject **)&result,
                             indices, 2, 0) < 0) {
@@ -1231,7 +1231,7 @@ array_item(PyArrayObject *self, Py_ssize_t i)
             i -= PyArray_DIM(self, 0);
         }
 
-        index.value = i;
+        index.int_index = i;
         index.type = HAS_INTEGER;
         if (get_item_pointer(self, &item, &index, 1) < 0) {
             return NULL;
@@ -1697,7 +1697,7 @@ array_assign_item(PyArrayObject *self, Py_ssize_t i, PyObject *op)
         i -= PyArray_DIM(self, 0);
     }
 
-    indices[0].value = i;
+    indices[0].int_index = i;
     indices[0].type = HAS_INTEGER;
     if (PyArray_NDIM(self) == 1) {
         char *item;
@@ -1711,7 +1711,7 @@ array_assign_item(PyArrayObject *self, Py_ssize_t i, PyObject *op)
     else {
         PyArrayObject *view;
 
-        indices[1].value = PyArray_NDIM(self) - 1;
+        indices[1].ellipsis_slices = PyArray_NDIM(self) - 1;
         indices[1].type = HAS_ELLIPSIS;
         if (get_view_from_index(self, &view, indices, 2, 0) < 0) {
             return -1;
@@ -2446,8 +2446,8 @@ mapiter_fill_info(PyArrayMapIterObject *mit, npy_index_info *indices,
 
         /* advance curr_dim for non-fancy indices */
         else if (indices[i].type == HAS_ELLIPSIS) {
-            curr_dim += (int)indices[i].value;
-            result_dim += (int)indices[i].value;
+            curr_dim += indices[i].ellipsis_slices;
+            result_dim += indices[i].ellipsis_slices;
         }
         else if (indices[i].type != HAS_NEWAXIS){
             curr_dim += 1;
