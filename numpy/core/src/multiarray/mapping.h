@@ -21,11 +21,9 @@ typedef struct {
      * worth. For HAS_FANCY, fancy_bool is -1 for an integer array, or the
      * length of the array for boolean arrays.
      */
-    union{
-        npy_intp int_index;
-        int ellipsis_slices;
-        npy_intp fancy_bool;
-    };
+    npy_intp int_index;
+    int ellipsis_slices;
+    npy_intp fancy_bool;
 
     /* kind of index, see constants in mapping.c */
     int type;
