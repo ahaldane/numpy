@@ -663,9 +663,23 @@ def median(a, axis=None, out=None, overwrite_input=False):
            fill_value = 1e+20)
 
     """
-    if not hasattr(a, 'mask') or np.count_nonzero(a.mask) == 0:
-        return masked_array(np.median(getdata(a, subok=True), axis=axis,
-                      out=out, overwrite_input=overwrite_input), copy=False)
+    if not hasattr(a, 'mask'):
+        m = np.median(getdata(a, subok=True), axis=axis,
+                      out=out, overwrite_input=overwrite_input,
+                      keepdims=keepdims)
+        if isinstance(m, np.ndarray) and 2 <= m.ndim:
+            return masked_array(m, copy=False)
+        else:
+            return m
+
+    r, k = _ureduce(a, func=_median, axis=axis, out=out,
+                    overwrite_input=overwrite_input)
+    if keepdims:
+        return r.reshape(k)
+    else:
+        return r
+
+def _median(a, axis=None, out=None, overwrite_input=False):
     if overwrite_input:
         if axis is None:
             asorted = a.ravel()
