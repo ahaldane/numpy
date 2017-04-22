@@ -277,6 +277,12 @@ regarding "workspace" sizes, and in some places may use faster algorithms.
 This now works on empty arrays, returning 0, and can reduce over multiple axes.
 Previously, a ``ValueError`` was thrown in these cases.
 
+``void`` datatype elements are now printed in hex notation
+----------------------------------------------------------
+Previously the raw void data of unstructured void elements (eg, ``V4``
+datatype) was printed to stdout. Now a hex representation compatible with
+the python ``bytes`` type is printed instead.
+
 Changes
 =======
 

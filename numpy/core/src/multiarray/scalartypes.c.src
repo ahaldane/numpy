@@ -652,6 +652,75 @@ static PyObject *
 }
 /**end repeat**/
 
+
+/*
+ * Convert array of bytes to a string representation much like bytes.__repr__,
+ * but convert all bytes (including ASCII) to the `\x00` notation, with
+ * uppercase hex codes (FF not ff).
+ *
+ * Largely copied from _Py_strhex_impl in CPython implementation
+ */
+static PyObject *
+_void_to_hex(const char *argbuf, const Py_ssize_t arglen,
+             const char *schars, const char *echars)
+{
+    PyObject *retval;
+    int extrachars, slen;
+    char *retbuf;
+    Py_ssize_t i, j;
+    const char *hexdigits = "0123456789ABCDEF";
+
+    extrachars = strlen(schars) + strlen(echars);
+    slen = extrachars + arglen*4;
+
+    if (arglen > PY_SSIZE_T_MAX/4 - extrachars) {
+        return PyErr_NoMemory();
+    }
+
+    retbuf = (char *)PyMem_Malloc(slen);
+    if (!retbuf) {
+        return PyErr_NoMemory();
+    }
+
+    memcpy(retbuf, schars, strlen(schars));
+    j = strlen(schars);
+
+    for (i = 0; i < arglen; i++) {
+        unsigned char c;
+        retbuf[j++] = '\\';
+        retbuf[j++] = 'x';
+        c = (argbuf[i] >> 4) & 0xf;
+        retbuf[j++] = hexdigits[c];
+        c = argbuf[i] & 0xf;
+        retbuf[j++] = hexdigits[c];
+    }
+    memcpy(&retbuf[j], echars, strlen(echars));
+
+    retval = PyUString_FromStringAndSize(retbuf, slen);
+    PyMem_Free(retbuf);
+    return retval;
+}
+
+static PyObject *
+voidtype_repr(PyObject *self)
+{
+    PyVoidScalarObject *s = (PyVoidScalarObject*) self;
+    if (PyDataType_HASFIELDS(s->descr)) {
+        return gentype_repr(self);
+    }
+    return _void_to_hex(s->obval, s->descr->elsize, "void(b'", "')");
+}
+
+static PyObject *
+voidtype_str(PyObject *self)
+{
+    PyVoidScalarObject *s = (PyVoidScalarObject*) self;
+    if (PyDataType_HASFIELDS(s->descr)) {
+        return gentype_str(self);
+    }
+    return _void_to_hex(s->obval, s->descr->elsize, "void(b'", "')");
+}
+
 static PyObject *
 datetimetype_repr(PyObject *self)
 {
@@ -4145,6 +4214,8 @@ initialize_numeric_types(void)
     PyVoidArrType_Type.tp_getset = voidtype_getsets;
     PyVoidArrType_Type.tp_as_mapping = &voidtype_as_mapping;
     PyVoidArrType_Type.tp_as_sequence = &voidtype_as_sequence;
+    PyVoidArrType_Type.tp_repr = voidtype_repr;
+    PyVoidArrType_Type.tp_str = voidtype_str;
 
     PyIntegerArrType_Type.tp_getset = inttype_getsets;
 
