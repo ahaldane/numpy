@@ -230,6 +230,9 @@ def _boolFormatter(x):
     else:
         return 'False'
 
+def _voidFormatter(x):
+    hexstr = "".join([r"\x{:X}".format(c) for c in x.tobytes()])
+    return r"void(b'{}')".format(hexstr)
 
 def repr_format(x):
     return repr(x)
@@ -245,6 +248,7 @@ def _get_formatdict(data, precision, suppress_small, formatter):
                   'datetime': DatetimeFormat(data),
                   'timedelta': TimedeltaFormat(data),
                   'numpystr': repr_format,
+                  'void': _voidFormatter,
                   'str': str}
 
     if formatter is not None:
@@ -264,6 +268,8 @@ def _get_formatdict(data, precision, suppress_small, formatter):
         if 'str_kind' in fkeys:
             for key in ['numpystr', 'str']:
                 formatdict[key] = formatter['str_kind']
+        if 'void_kind' in fkeys:
+            formatdict['void'] = formatter['void_kind']
         for key in formatdict.keys():
             if key in fkeys:
                 formatdict[key] = formatter[key]
@@ -309,6 +315,8 @@ def _get_format_function(data, precision, suppress_small, formatter):
         return formatdict['numpystr']
     elif issubclass(dtypeobj, _nt.datetime64):
         return formatdict['datetime']
+    elif issubclass(dtypeobj, _nt.void):
+        return formatdict['void']
     else:
         return formatdict['numpystr']
 
@@ -385,6 +393,7 @@ def array2string(a, max_line_width=None, precision=None,
             - 'longcomplexfloat' : composed of two 128-bit floats
             - 'numpystr' : types `numpy.string_` and `numpy.unicode_`
             - 'str' : all other strings
+            - 'void'
 
         Other keys that can be used to set a group of types at once are::
 
