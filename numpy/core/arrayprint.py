@@ -55,6 +55,13 @@ _nan_str = 'nan'
 _inf_str = 'inf'
 _formatter = None  # formatting function for array elements
 
+_kinds = {'all':          ['bool', 'int', 'float', 'longfloat', 'complexfloat',
+                           'longcomplexfloat', 'datetime', 'timedelta',
+                           'numpystr', 'void', 'str'],
+          'int_kind':     ['int'],
+          'float_kind':   ['float', 'longfloat'],
+          'complex_kind': ['complexfloat', 'longcomplexfloat'],
+          'str_kind':     ['numpystr', 'str'] }
 
 def set_printoptions(precision=None, threshold=None, edgeitems=None,
                      linewidth=None, suppress=None,
@@ -179,7 +186,20 @@ def set_printoptions(precision=None, threshold=None, edgeitems=None,
         _nan_str = nanstr
     if infstr is not None:
         _inf_str = infstr
-    _formatter = formatter
+
+    _formatter = _expand_formatter_kinds(formatter)
+
+def _expand_formatter_kinds(formatter):
+    if formatter is None:
+        return None
+
+    formatdict = {}
+    for tp, fmt_func in formatter.items():
+        if fmt_func is not None:
+            for k in _kinds.get(tp, [tp]):
+                formatdict[k] = fmt_func
+
+    return formatdict
 
 def get_printoptions():
     """
@@ -245,48 +265,6 @@ def _boolFormatter(x):
 def repr_format(x):
     return repr(x)
 
-def _get_formatdict(data, precision, suppress_small, formatter):
-    # wrapped in lambdas to avoid taking a code path with the wrong type of data
-    formatdict = {'bool': lambda: _boolFormatter,
-                  'int': lambda: IntegerFormat(data),
-                  'float': lambda: FloatFormat(data, precision, suppress_small),
-                  'longfloat': lambda: LongFloatFormat(precision),
-                  'complexfloat': lambda: ComplexFormat(data, precision,
-                                                 suppress_small),
-                  'longcomplexfloat': lambda: LongComplexFormat(precision),
-                  'datetime': lambda: DatetimeFormat(data),
-                  'timedelta': lambda: TimedeltaFormat(data),
-                  'numpystr': lambda: repr_format,
-                  'str': lambda: str}
-
-    # we need to wrap values in `formatter` in a lambda, so that the interface
-    # is the same as the above values.
-    def indirect(x):
-        return lambda: x
-
-    if formatter is not None:
-        fkeys = [k for k in formatter.keys() if formatter[k] is not None]
-        if 'all' in fkeys:
-            for key in formatdict.keys():
-                formatdict[key] = indirect(formatter['all'])
-        if 'int_kind' in fkeys:
-            for key in ['int']:
-                formatdict[key] = indirect(formatter['int_kind'])
-        if 'float_kind' in fkeys:
-            for key in ['float', 'longfloat']:
-                formatdict[key] = indirect(formatter['float_kind'])
-        if 'complex_kind' in fkeys:
-            for key in ['complexfloat', 'longcomplexfloat']:
-                formatdict[key] = indirect(formatter['complex_kind'])
-        if 'str_kind' in fkeys:
-            for key in ['numpystr', 'str']:
-                formatdict[key] = indirect(formatter['str_kind'])
-        for key in formatdict.keys():
-            if key in fkeys:
-                formatdict[key] = indirect(formatter[key])
-
-    return formatdict
-
 def _get_format_function(data, precision, suppress_small, formatter):
     """
     find the right formatting function for the dtype_
@@ -304,30 +282,34 @@ def _get_format_function(data, precision, suppress_small, formatter):
         return StructureFormat(format_functions)
 
     dtypeobj = dtype_.type
-    formatdict = _get_formatdict(data, precision, suppress_small, formatter)
-    if issubclass(dtypeobj, _nt.bool_):
-        return formatdict['bool']()
-    elif issubclass(dtypeobj, _nt.integer):
-        if issubclass(dtypeobj, _nt.timedelta64):
-            return formatdict['timedelta']()
-        else:
-            return formatdict['int']()
-    elif issubclass(dtypeobj, _nt.floating):
-        if issubclass(dtypeobj, _nt.longfloat):
-            return formatdict['longfloat']()
-        else:
-            return formatdict['float']()
-    elif issubclass(dtypeobj, _nt.complexfloating):
-        if issubclass(dtypeobj, _nt.clongfloat):
-            return formatdict['longcomplexfloat']()
-        else:
-            return formatdict['complexfloat']()
-    elif issubclass(dtypeobj, (_nt.unicode_, _nt.string_)):
-        return formatdict['numpystr']()
-    elif issubclass(dtypeobj, _nt.datetime64):
-        return formatdict['datetime']()
-    else:
-        return formatdict['numpystr']()
+
+    cases = [
+        (_nt.bool_,          'bool',      lambda: _boolFormatter),
+        (_nt.timedelta64,    'timedelta', lambda: TimedeltaFormat(data)),
+        (_nt.integer,        'int',       lambda: IntegerFormat(data)),
+        (_nt.longfloat,      'longfloat', lambda: LongFloatFormat(precision)),
+        (_nt.floating,       'float',     lambda: FloatFormat(data, precision,
+                                                              suppress_small)),
+        (_nt.clongfloat,     'longcomplexfloat',
+                                          lambda: LongComplexFormat(precision)),
+        (_nt.complexfloating,'complexfloat',
+                                          lambda: ComplexFormat(data, precision,
+                                                               suppress_small)),
+        (_nt.datetime64,     'datetime',  lambda: DatetimeFormat(data))
+        ]
+
+    tp_name = 'numpystr'
+    tp_format = repr_format
+
+    for tp, name, fmt_l in cases:
+        if issubclass(dtypeobj, tp):
+            tp_name, tp_format = name, fmt_l()
+            break
+
+    if formatter and tp_name in formatter:
+        tp_format = formatter[tp_name]
+
+    return tp_format
 
 def _array2string(a, max_line_width, precision, suppress_small, separator=' ',
                   prefix="", formatter=None):
@@ -492,6 +474,7 @@ def array2string(a, max_line_width=None, precision=None,
     if suppress_small is None:
         suppress_small = _float_output_suppress_small
 
+    formatter = _expand_formatter_kinds(formatter)
     if formatter is None:
         formatter = _formatter
 
