@@ -521,6 +521,8 @@ def array2string(a, max_line_width=None, precision=None,
     if formatter is None:
         formatter = _formatter
 
+    a = asarray(a)
+
     if a.size == 0:
         # treat as a null array if any of shape elements == 0
         lst = "[]"
