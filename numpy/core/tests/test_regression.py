@@ -859,7 +859,7 @@ class TestRegression(TestCase):
 
     def test_sign_bit(self, level=rlevel):
         x = np.array([0, -0.0, 0])
-        assert_equal(str(np.abs(x)), '[ 0.  0.  0.]')
+        assert_equal(str(np.abs(x)), '[0. 0. 0.]')
 
     def test_flat_index_byteswap(self, level=rlevel):
         for dt in (np.dtype('<i4'), np.dtype('>i4')):
