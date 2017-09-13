@@ -47,6 +47,10 @@ dimensions. A FutureWarning is given if the parameter is not passed explicitly.
   writeable. Currently it returns a non-writeable copy. See gh-7054 for a
   discussion of the issue.
 
+``np.set_printoptions`` and ``np.array2string`` will use keyword args only
+--------------------------------------------------------------------------
+The use of positional args to specify options for these functions is
+deprecated. They will eventually only accept keyword arguments.
 
 
 Build System Changes

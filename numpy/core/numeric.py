@@ -1882,8 +1882,11 @@ def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
         class_name = "array"
 
     if arr.size > 0 or arr.shape == (0,):
-        lst = array2string(arr, max_line_width, precision, suppress_small,
-                           ', ', class_name + "(")
+        lst = array2string(arr, max_line_width=max_line_width,
+                                precision=precision, 
+                                suppress_small=suppress_small, 
+                                separator=', ',
+                                prefix=class_name + "(")
     else:  # show zero-length shape unless it is (0,)
         lst = "[], shape=%s" % (repr(arr.shape),)
 
@@ -1941,7 +1944,11 @@ def array_str(a, max_line_width=None, precision=None, suppress_small=None):
     '[0 1 2]'
 
     """
-    return array2string(a, max_line_width, precision, suppress_small, ' ', "")
+    return array2string(a, max_line_width=max_line_width, 
+                           precision=precision, 
+                           suppress_small=suppress_small, 
+                           separator=' ', 
+                           prefix="")
 
 
 def set_string_function(f, repr=True):

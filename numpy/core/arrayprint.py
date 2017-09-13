@@ -62,25 +62,26 @@ _format_options = {
     'sign': '-',
     'formatter': None }
 
-def _make_options_dict(precision=None, threshold=None, edgeitems=None,
-                       linewidth=None, suppress=None, nanstr=None, infstr=None,
-                       sign=None, formatter=None):
-    """ make a dictionary out of the non-None arguments, plus sanity checks """
+def _process_options_args(options):
+    valid_options = ['precision', 'threshold', 'edgeitems', 'linewidth',
+                    'suppress', 'nanstr', 'infstr', 'formatter', 'sign']
 
-    options = {k: v for k, v in locals().items() if v is not None}
+    for opt in options:
+        if opt not in valid_options:
+            raise ValueError("{} is not a valid option".format(opt))
 
-    if suppress is not None:
-        options['suppress'] = bool(suppress)
+    # remove any options set to None
+    for opt in [opt for opt in options if options[opt] is None]:
+        del options[opt]
 
-    if sign not in [None, '-', '+', ' ', 'legacy']:
+    if 'suppress' in options:
+        options['suppress'] = bool(options['suppress'])
+
+    if 'sign' in options and options['sign'] not in ['-', '+', ' ', 'legacy']:
         raise ValueError("sign option must be one of "
                          "' ', '+', '-', or 'legacy'")
 
-    return options
-
-def set_printoptions(precision=None, threshold=None, edgeitems=None,
-                     linewidth=None, suppress=None, nanstr=None, infstr=None,
-                     formatter=None, sign=None):
+def set_printoptions(*args, **options):
     """
     Set printing options.
 
@@ -107,7 +108,7 @@ def set_printoptions(precision=None, threshold=None, edgeitems=None,
         String representation of floating point not-a-number (default nan).
     infstr : str, optional
         String representation of floating point infinity (default inf).
-    sign : string, either '-', '+' or ' ', optional
+    sign : string, either '-', '+', ' ' or 'legacy', optional
         Controls printing of the sign of floating-point types. If '+', always
         print the sign of positive values. If ' ', always prints a space
         (whitespace character) in the sign position of positive values.  If
@@ -189,10 +190,24 @@ def set_printoptions(precision=None, threshold=None, edgeitems=None,
     ... linewidth=75, nanstr='nan', precision=8,
     ... suppress=False, threshold=1000, formatter=None)
     """
-    opt = _make_options_dict(precision, threshold, edgeitems, linewidth,
-                             suppress, nanstr, infstr, sign, formatter)
-    opt['formatter'] = formatter
-    _format_options.update(opt)
+
+    if args != ():
+        warnings.warn("Using positional arguments for np.set_printoptions is "
+                      "deprecated. Please use keyword arguments.",
+                      DeprecationWarning, stacklevel=1)
+        # note sign is not supported positionally, since was not preexisting
+        argnames = ['precision', 'threshold', 'edgeitems', 'linewidth',
+                    'suppress', 'nanstr', 'infstr', 'formatter']
+        args = [(n, arg) for n, arg in zip(argnames, args) if arg is not None]
+        for dup_name in (n for n, arg in args if n in options):
+            raise TypeError("set_printoptions() got multiple values for "
+                            "keyword argument '{}'".format(dup_name))
+        options.update(args)
+
+    _process_options_args(options)
+    # formatter is always reset
+    options['formatter'] = options.get('formatter', None)
+    _format_options.update(options)
 
 
 def get_printoptions():
@@ -252,12 +267,11 @@ def _object_format(o):
 def repr_format(x):
     return repr(x)
 
-def _get_formatdict(data, **kwargs):
-    prec, supp, sign = kwargs['precision'], kwargs['suppress'], kwargs['sign']
-    legacy = kwargs['sign'] == 'legacy'
+def _get_formatdict(data, **opt):
+    prec, supp, sign = opt['precision'], opt['suppress'], opt['sign']
 
     # wrapped in lambdas to avoid taking a code path with the wrong type of data
-    formatdict = {'bool': lambda: BoolFormat(data, legacy=legacy),
+    formatdict = {'bool': lambda: BoolFormat(data, legacy=(sign == 'legacy')),
                   'int': lambda: IntegerFormat(data),
                   'float': lambda: FloatFormat(data, prec, supp, sign),
                   'longfloat': lambda: LongFloatFormat(prec),
@@ -274,7 +288,7 @@ def _get_formatdict(data, **kwargs):
     def indirect(x):
         return lambda: x
 
-    formatter = kwargs['formatter']
+    formatter = opt['formatter']
     if formatter is not None:
         fkeys = [k for k in formatter.keys() if formatter[k] is not None]
         if 'all' in fkeys:
@@ -298,7 +312,7 @@ def _get_formatdict(data, **kwargs):
 
     return formatdict
 
-def _get_format_function(data, options):
+def _get_format_function(data, **options):
     """
     find the right formatting function for the dtype_
     """
@@ -306,8 +320,8 @@ def _get_format_function(data, options):
     if dtype_.fields is not None:
         format_functions = []
         for field_name in dtype_.names:
-            field_values = data[field_name]
-            format_function = _get_format_function(ravel(field_values), options)
+            field_values = ravel(data[field_name])
+            format_function = _get_format_function(field_values, **options)
             if dtype_[field_name].shape != ():
                 format_function = SubArrayFormat(format_function)
             format_functions.append(format_function)
@@ -354,7 +368,7 @@ def _array2string(a, options, separator=' ', prefix=""):
             data = ravel(asarray(a))
 
     # find the right formatting function for the array
-    format_function = _get_format_function(data, options)
+    format_function = _get_format_function(data, **options)
 
     # skip over "["
     next_line_prefix = " "
@@ -395,13 +409,61 @@ def _recursive_guard(fillvalue='...'):
 
     return decorating_function
 
+# ideally this function can disappear one day... needed to account for inconsistencies
+# between array2string and set_printoptions
+def _parse_array2string_args(*args, **options):
+    # we still support positional args, but they are deprecated
+    argnames = ['max_line_width', 'precision', 'suppress_small', 'separator',
+                'prefix', 'style', 'formatter']
+    if args != ():
+        warnings.warn("Using positional arguments for np.array2string is "
+                      "deprecated. Please use keyword arguments.",
+                      DeprecationWarning, stacklevel=4)
+        args = [(n, arg) for n, arg in zip(argnames, args) if arg is not None]
+        for dup_name in (n for n, arg in args if n in options):
+            raise TypeError("array2string() got multiple values for "
+                            "keyword argument '{}'".format(dup_name))
+        options.update(args)
+
+    # sign, threshold, edgeitems are not supported positionally, since were
+    # not preexisting when we decided to consider deprecating positional args
+    argnames += ['threshold', 'edgeitems', 'sign']
+    for opt in options:
+        if opt not in argnames:
+            raise ValueError("{} is not a valid option".format(opt))
+
+    # remove any options set to None
+    for opt in [opt for opt in options if options[opt] is None]:
+        del options[opt]
+
+    # array2string uses a different name for same purpose
+    if 'max_line_width' in options:
+        options['linewidth'] = options['max_line_width']
+        del options['max_line_width']
+
+    if 'suppress_small' in options:
+        options['suppress'] = options['suppress_small']
+        del options['suppress_small']
+
+    # these options are not customizable by set_printoptions
+    prefix = options.get('prefix', "")
+    if 'prefix' in options:
+        del options['prefix']
+
+    separator = options.get('separator', " ")
+    if 'separator' in options:
+        del options['separator']
+
+    style = options.get('style', np._NoValue)
+    if 'style' in options:
+        del options['style']
+
+    return options, separator, prefix, style
 
 # gracefully handle recursive calls - this comes up when object arrays contain
 # themselves
 @_recursive_guard()
-def array2string(a, max_line_width=None, precision=None,
-                 suppress_small=None, separator=' ', prefix="",
-                 style=np._NoValue, formatter=None, **kwds):
+def array2string(a, *args, **options):
     """
     Return a string representation of an array.
 
@@ -419,9 +481,9 @@ def array2string(a, max_line_width=None, precision=None,
         Represent very small numbers as zero. A number is "very small" if it
         is smaller than the current printing precision.
     separator : str, optional
-        Inserted between elements.
+        Inserted between elements. Default ' '.
     prefix : str, optional
-        An array is typically printed as::
+        Default "". An array is typically printed as::
 
           'prefix(' + array2string(a) + ')'
 
@@ -509,15 +571,14 @@ def array2string(a, max_line_width=None, precision=None,
     '[0x0L 0x1L 0x2L]'
 
     """
+    overrides, separator, prefix, style = _parse_array2string_args(*args, **options)
+    _process_options_args(overrides)
 
     # Deprecation 05-16-2017  v1.14
     if style is not np._NoValue:
         warnings.warn("'style' argument is deprecated and no longer functional",
                       DeprecationWarning, stacklevel=3)
 
-    overrides = _make_options_dict(precision, threshold, edgeitems,
-                                   max_line_width, suppress_small, None, None,
-                                   sign, formatter)
     options = _format_options.copy()
     options.update(overrides)
 
@@ -607,14 +668,11 @@ def _formatArray(a, format_function, rank, max_line_len,
 class FloatFormat(object):
     def __init__(self, data, precision, suppress_small, sign=False):
         # for backcompatibility, accept bools
-        if sign is False:
-            sign = '-'
-        if sign is True:
-            sign = '+'
+        if isinstance(sign, bool):
+            sign = '+' if sign else '-'
 
-        # for backcompatibility, 0d arrays are not padded
-        if sign == ' ' and data.shape == ():
-            sign = '-'
+        if sign == 'legacy':
+            sign = '-' if data.shape == () else ' '
 
         self.precision = precision
         self.suppress_small = suppress_small
@@ -623,7 +681,7 @@ class FloatFormat(object):
         self.large_exponent = False
         try:
             self.fillFormat(ravel(data))
-        except (TypeError, NotImplementedError):
+        except (NotImplementedError):
             # if reduce(data) fails, this instance will not be called, just
             # instantiated in formatdict.
             pass
@@ -659,8 +717,8 @@ class FloatFormat(object):
             signpos = signpos if self.sign != ' ' else 2
             max_str_len = signpos + 6 + self.precision + self.large_exponent
 
-            signchar = '' if self.sign == '-' else self.sign
-            format = '%' + signchar + '%d.%de' % (max_str_len, self.precision)
+            conversion = '' if self.sign == '-' else self.sign
+            format = '%' + conversion + '%d.%de' % (max_str_len, self.precision)
         else:
             if len(non_zero) and self.precision > 0:
                 precision = self.precision
@@ -680,8 +738,8 @@ class FloatFormat(object):
                 inflen = len(_format_options['infstr']) + neginf
                 max_str_len = max(max_str_len, nanlen, inflen)
 
-            signchar = '' if self.sign == '-' else self.sign
-            format = '%#' + signchar + '%d.%df' % (max_str_len, precision)
+            conversion = '' if self.sign == '-' else self.sign
+            format = '%#' + conversion + '%d.%df' % (max_str_len, precision)
 
         self.special_fmt = '%%%ds' % (max_str_len,)
         self.format = format
@@ -743,14 +801,14 @@ class IntegerFormat(object):
 
 class BoolFormat(object):
     def __init__(self, data, **kwds):
-        # in legacy printing style, always include a space before True
-        if keywds.get('legacy', False):
-            self.truestr = ' True'
+        # in legacy printing style, include a space before True except in 0d
+        if kwds.get('legacy', False):
+            self.truestr = ' True' if data.shape != () else 'True'
             return
 
         # add an extra space so " True" and "False" have the same length and
         # array elements align nicely when printed, but only for arrays with
-        # more than one element.
+        # more than one element (0d and nd)
         self.truestr = ' True' if data.size > 1 else 'True'
 
     def __call__(self, x):
@@ -807,10 +865,8 @@ class LongComplexFormat(object):
 class ComplexFormat(object):
     def __init__(self, x, precision, suppress_small, sign=False):
         # for backcompatibility, accept bools
-        if sign is False:
-            sign = '-'
-        if sign is True:
-            sign = '+'
+        if isinstance(sign, bool):
+            sign = '+' if sign else '-'
 
         self.real_format = FloatFormat(x.real, precision, suppress_small,
                                        sign=sign)
