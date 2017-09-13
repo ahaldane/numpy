@@ -44,9 +44,15 @@ from .fromnumeric import ravel
 from .numeric import asarray
 import warnings
 
+add_sig = lambda *args: lambda w: w  # dummy decorator
+
 if sys.version_info[0] >= 3:
     _MAXINT = sys.maxsize
     _MININT = -sys.maxsize - 1
+    if sys.version_info[1] >= 3:
+        def add_sig(wrapped):
+            return functools.partial(functools.update_wrapper, wrapped=wrapped,
+                                     assigned='__signature__')
 else:
     _MAXINT = sys.maxint
     _MININT = -sys.maxint - 1
@@ -81,6 +87,11 @@ def _process_options_args(options):
         raise ValueError("sign option must be one of "
                          "' ', '+', '-', or 'legacy'")
 
+def _set_printoptions_sig(precision=None, threshold=None, edgeitems=None,
+                          linewidth=None, suppress=None,nanstr=None, 
+                          infstr=None, sign=None, formatter=None):
+    pass
+@add_sig(_set_printoptions_sig)
 def set_printoptions(*args, **options):
     """
     Set printing options.
@@ -460,9 +471,14 @@ def _parse_array2string_args(*args, **options):
 
     return options, separator, prefix, style
 
+def _array2string_sig(a, max_line_width=None, precision=None, suppress_small=None,
+               separator=' ', prefix="", formatter=None, threshold=None,
+               edgeitems=None, sign=None):
+    pass
 # gracefully handle recursive calls - this comes up when object arrays contain
 # themselves
 @_recursive_guard()
+@add_sig(_array2string_sig)
 def array2string(a, *args, **options):
     """
     Return a string representation of an array.
