@@ -426,8 +426,8 @@ def _array2string(a, options, separator=' ', prefix=""):
 
 def array2string(a, max_line_width=None, precision=None,
                  suppress_small=None, separator=' ', prefix="",
-                 style=None, formatter=None, threshold=None,
-                 edgeitems=None, sign=None, **kwarg):
+                 style=np._NoValue, formatter=None, threshold=None,
+                 edgeitems=None, sign=None, floatmode=None, **kwarg):
     """
     Return a string representation of an array.
 
@@ -452,10 +452,10 @@ def array2string(a, max_line_width=None, precision=None,
           'prefix(' + array2string(a) + ')'
 
         The length of the prefix string is used to align the output correctly.
-    style : None or function, optional
-        Controls the printing of 0d arrays. If `None`, prints the 0d array's
-        element using the usual array formatting. Otherwise, `style` should be
-        a function that accepts a numpy scalar and returns a string.
+    style : _NoValue, optional
+        Has no effect, do not use.
+
+        .. deprecated:: 1.14.0
     formatter : dict of callables, optional
         If not None, the keys should indicate the type(s) that the respective
         formatting function applies to.  Callables should return a string.
@@ -566,18 +566,19 @@ def array2string(a, max_line_width=None, precision=None,
     options.update(overrides)
 
     if options['legacy'] and a.shape == () and not a.dtype.names:
-        if style is None:
-            style = repr
         return style(a.item())
+    elif not (style is np._NoValue):
+        warnings.warn("'style' argument is deprecated and no longer functional"
+                      " except in 'legacy' mode",
+                      DeprecationWarning, stacklevel=3)
 
-    if style is not None and a.shape == ():
-        return style(a[()])
-    elif a.size == 0:
-        # treat as a null array if any of shape elements == 0
-        lst = "[]"
-    else:
-        lst = _array2string(a, options, separator, prefix)
-    return lst
+
+
+    # treat as a null array if any of shape elements == 0
+    if a.size == 0:
+        return "[]"
+
+    return _array2string(a, options, separator, prefix)
 
 
 def _extendLine(s, line, word, max_line_len, next_line_prefix):
@@ -1126,7 +1127,9 @@ def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
     else:
         class_name = "array"
 
-    if arr.size > 0 or arr.shape == (0,):
+    if _format_options['legacy'] and arr.shape == () and not arr.dtype.names:
+        lst = repr(arr[()])
+    elif arr.size > 0 or arr.shape == (0,):
         lst = array2string(arr, max_line_width, precision, suppress_small,
                            ', ', class_name + "(")
     else:  # show zero-length shape unless it is (0,)
@@ -1185,8 +1188,12 @@ def array_str(a, max_line_width=None, precision=None, suppress_small=None):
     '[0 1 2]'
 
     """
-    return array2string(a, max_line_width, precision, suppress_small,
-                        ' ', "", str)
+    if a.shape == ():
+        if _format_options['legacy'] and not a.dtype.names:
+            return str(a.item())
+        return str(a[()])
+
+    return array2string(a, max_line_width, precision, suppress_small, ' ', "")
 
 def set_string_function(f, repr=True):
     """
