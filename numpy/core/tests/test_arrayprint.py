@@ -248,6 +248,7 @@ class TestPrintOptions(object):
         else:
             assert_equal(repr(np.array(u'café', np.unicode_)),
                          "array(u'caf\\xe9',\n      dtype='<U4')")
+        # str removes quotes from 0d string arrays.
         assert_equal(str(np.array('test', np.str_)), 'test')
 
         a = np.zeros(1, dtype=[('a', '<i4', (3,))])
@@ -256,12 +257,11 @@ class TestPrintOptions(object):
         assert_equal(repr(np.datetime64('2005-02-25')[...]),
                      "array('2005-02-25', dtype='datetime64[D]')")
 
-        # repr of 0d arrays is affected by printoptions
+        # str and repr of 0d arrays are affected by printoptions
         x = np.array(1)
         np.set_printoptions(formatter={'all':lambda x: "test"})
         assert_equal(repr(x), "array(test)")
-        # str is unaffected
-        assert_equal(str(x), "1")
+        assert_equal(str(x), "test")
 
     def test_float_spacing(self):
         x = np.array([1., 2., 3.])

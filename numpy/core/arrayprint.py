@@ -973,7 +973,7 @@ class ComplexFloatingFormat(object):
                                           suppress_small, sign=sign, **kwarg)
         self.imag_format = FloatingFormat(x.imag, precision, floatmode,
                                           suppress_small, sign=sign, **kwarg)
-        self.imag_format = FloatingFormat(x.imag, precision, floatmode, 
+        self.imag_format = FloatingFormat(x.imag, precision, floatmode,
                                           suppress_small, sign='+', **kwarg)
 
     def __call__(self, x):
@@ -1188,12 +1188,18 @@ def array_str(a, max_line_width=None, precision=None, suppress_small=None):
     '[0 1 2]'
 
     """
-    if a.shape == ():
-        if _format_options['legacy'] and not a.dtype.names:
+    if a.shape == () and _format_options['legacy'] and not a.dtype.names:
             return str(a.item())
-        return str(a[()])
 
-    return array2string(a, max_line_width, precision, suppress_small, ' ', "")
+    s = array2string(a, max_line_width, precision, suppress_small, ' ', "")
+    # for string array scalars, we do not want to include the quotes in
+    # the result.
+    if (a.shape == () and a.dtype.kind in 'US' and s[0] == s[-1] and
+            (s[0] == "'" or s[0] == '"')):
+        return s[1:-1]
+    else:
+        return s
+
 
 def set_string_function(f, repr=True):
     """
