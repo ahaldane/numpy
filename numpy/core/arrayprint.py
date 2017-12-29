@@ -813,6 +813,7 @@ class FloatingFormat(object):
     def fillFormat(self, data):
         # only the finite values are used to compute the number of digits
         finite_vals = data[isfinite(data)]
+        all_positive = not any(np.signbit(finite_vals))
 
         # choose exponential mode based on the non-zero finite values:
         abs_non_zero = absolute(finite_vals[finite_vals != 0])
@@ -848,7 +849,7 @@ class FloatingFormat(object):
             # for back-compatibility with np 1.13, use two spaces and full prec
             if self._legacy == '1.13':
                 # undo addition of sign pos below
-                will_add_sign = all(finite_vals > 0) and self.sign == ' '
+                will_add_sign = all_positive and self.sign == ' '
                 self.pad_left = 3 - will_add_sign
             else:
                 # this should be only 1 or 2. Can be calculated from sign.
@@ -881,7 +882,7 @@ class FloatingFormat(object):
                 self.trim = '.'
 
         # account for sign = ' ' by adding one to pad_left
-        if all(finite_vals >= 0) and self.sign == ' ':
+        if all_positive and self.sign == ' ':
             self.pad_left += 1
 
         # if there are non-finite values, may need to increase pad_left
