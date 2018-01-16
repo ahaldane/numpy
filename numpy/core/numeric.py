@@ -69,7 +69,7 @@ __all__ = [
     'False_', 'True_', 'bitwise_not', 'CLIP', 'RAISE', 'WRAP', 'MAXDIMS',
     'BUFSIZE', 'ALLOW_THREADS', 'ComplexWarning', 'full', 'full_like',
     'matmul', 'shares_memory', 'may_share_memory', 'MAY_SHARE_BOUNDS',
-    'MAY_SHARE_EXACT', 'TooHardError', 'AxisError' ]
+    'MAY_SHARE_EXACT', 'TooHardError', 'AxisError', 'multifield_index_view']
 
 if sys.version_info[0] < 3:
     __all__.extend(['getbuffer', 'newbuffer'])
@@ -2276,7 +2276,7 @@ def isclose(a, b, rtol=1.e-5, atol=1.e-8, equal_nan=False):
     relative difference (`rtol` * abs(`b`)) and the absolute difference
     `atol` are added together to compare against the absolute difference
     between `a` and `b`.
-    
+
     .. warning:: The default `atol` is not appropriate for comparing numbers
                  that are much smaller than one (see Notes).
 
@@ -2313,12 +2313,12 @@ def isclose(a, b, rtol=1.e-5, atol=1.e-8, equal_nan=False):
      absolute(`a` - `b`) <= (`atol` + `rtol` * absolute(`b`))
 
     Unlike the built-in `math.isclose`, the above equation is not symmetric
-    in `a` and `b` -- it assumes `b` is the reference value -- so that 
+    in `a` and `b` -- it assumes `b` is the reference value -- so that
     `isclose(a, b)` might be different from `isclose(b, a)`. Furthermore,
     the default value of atol is not zero, and is used to determine what
     small values should be considered close to zero. The default value is
     appropriate for expected values of order unity: if the expected values
-    are significantly smaller than one, it can result in false positives. 
+    are significantly smaller than one, it can result in false positives.
     `atol` should be carefully selected for the use case at hand. A zero value
     for `atol` will result in `False` if either `a` or `b` is zero.
 
@@ -2905,6 +2905,7 @@ nan = NaN = NAN
 False_ = bool_(False)
 True_ = bool_(True)
 
+multifield_index_view = False
 
 def extend_all(module):
     adict = {}

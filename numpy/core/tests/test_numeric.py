@@ -904,7 +904,7 @@ class TestTypes(object):
             fi = np.finfo(dt)
             assert_(np.can_cast(fi.min, dt))
             assert_(np.can_cast(fi.max, dt))
-            
+
 
 # Custom exception class to test exception propagation in fromiter
 class NIterError(Exception):

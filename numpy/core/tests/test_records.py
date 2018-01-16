@@ -357,6 +357,8 @@ class TestRecord(object):
 
     def test_out_of_order_fields(self):
         # names in the same order, padding added to descr
+        # note: this only works for the future "view" behavior
+        np.multifield_index_view = True
         x = self.data[['col1', 'col2']]
         assert_equal(x.dtype.names, ('col1', 'col2'))
         assert_equal(x.dtype.descr,
@@ -367,6 +369,7 @@ class TestRecord(object):
         y = self.data[['col2', 'col1']]
         assert_equal(y.dtype.names, ('col2', 'col1'))
         assert_raises(ValueError, lambda: y.dtype.descr)
+        np.multifield_index_view = False
 
     def test_pickle_1(self):
         # Issue #1529
@@ -396,7 +399,8 @@ class TestRecord(object):
 
         # https://github.com/numpy/numpy/issues/3256
         ra = np.recarray((2,), dtype=[('x', object), ('y', float), ('z', int)])
-        ra[['x','y']]  # TypeError?
+        with assert_warns(FutureWarning):
+            ra[['x','y']]  # TypeError?
 
     def test_record_scalar_setitem(self):
         # https://github.com/numpy/numpy/issues/3561

@@ -5,7 +5,7 @@ import itertools
 
 import numpy as np
 from numpy.testing import (
-    run_module_suite, assert_, assert_equal, assert_raises
+    run_module_suite, assert_, assert_equal, assert_raises, assert_warns
 )
 
 # This is the structure of the table used for plain objects:

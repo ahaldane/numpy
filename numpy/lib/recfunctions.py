@@ -731,6 +731,81 @@ def rec_append_fields(base, names, data, dtypes=None):
     return append_fields(base, names, data=data, dtypes=dtypes,
                          asrecarray=True, usemask=False)
 
+def repack_fields(a, align=False, recurse=True):
+    """
+    Return a copy of a structured array with fields re-packed in memory.
+
+    The memory layout of structured datatypes allows fields at arbitrary
+    byte offsets. This means the fields can be separated by padding bytes,
+    their offsets can be non-monotonically increasing, and they can overlap.
+
+    This method removes any overlaps and reorders the fields in memory to have
+    increasing byte offsets, and will add or remove padding bytes depending on
+    the `align` option, which behaves like the `align` option to `np.dtype`.
+
+    If `align=False`, this method produces a "packed" memory layout in which
+    each field starts at the byte the previous field ended, and any padding
+    bytes are removed.
+
+    If `align=True`, this methods produces an "aligned" memory layout in which
+    each field's offset is a multiple of its alignment, and the total itemsize
+    is a multiple of the largest alignment, by adding padding bytes as needed.
+
+    This method also accepts a dtype object, in which case it returns a dtype
+    with repacked fields.
+
+    Parameters
+    ----------
+    a : ndarray or dtype
+       Structured array or dtype for which to repack the fields.
+    align : boolean
+       If true, use an "aligned" memory layout, otherwise a  "packed" layout.
+    recurse : boolean
+       If True, also repack nested structures.
+
+    Returns
+    -------
+    repacked : ndarray or dtype
+       Copy of a with fields repacked.
+
+    Examples
+    --------
+
+    >>> def print_offsets(d):
+    ...     print("offsets:", [d.fields[name][1] for name in d.names])
+    ...     print("itemsize:", d.itemsize)
+    ...
+    >>> dt = np.dtype('u1,i4,f4', align=True)
+    >>> dt
+    dtype({'names':['f0','f1','f2'], 'formats':['u1','<i4','<f8'], 'offsets':[0,4,8], 'itemsize':16}, align=True)
+    >>> print_offsets(dt)
+    ('offsets:', [0, 4, 8])
+    ('itemsize:', 16)
+    >>> packed_dt = np.repack_fields(dt)
+    >>> packed_dt
+    dtype([('f0', 'u1'), ('f1', '<i4'), ('f2', '<f8')])
+    >>> print_offsets(packed_dt)
+    ('offsets:', [0, 1, 5])
+    ('itemsize:', 13)
+
+    """
+    if not isinstance(a, np.dtype):
+        return a.astype(repack_fields(a.dtype, align=align, recurse=recurse))
+
+    if a.names is None:
+        raise ValueError("a must be or have a structured dtype")
+
+    fields = [a.fields[name] for name in a.names]
+    if recurse:
+        formats = [repack_fields(f[0], align=align, recurse=True)
+                   if f[0].names else f[0] for f in fields]
+    else:
+        formats = [f[0] for f in fields]
+    titles = [f[2] if len(f) == 3 else None for f in fields]
+
+    return np.dtype({'names': a.names,
+                     'formats': formats,
+                     'titles': titles}, align=align)
 
 def stack_arrays(arrays, defaults=None, usemask=True, asrecarray=False,
                  autoconvert=False):
