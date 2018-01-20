@@ -41,6 +41,32 @@
 #include "numpy/arrayscalars.h"
 #include "numpy/npy_common.h"
 
+
+#define NPY_HALF_BINFMT IEEE_binary16
+
+/* NPY_FLOAT_BINFMT and NPY_DOUBLE_BINFMT defined in npy_common.h */
+
+#if defined(HAVE_LDOUBLE_IEEE_QUAD_BE)
+    #define NPY_LONGDOUBLE_BINFMT IEEE_binary128_be
+#elif defined(HAVE_LDOUBLE_IEEE_QUAD_LE)
+    #define NPY_LONGDOUBLE_BINFMT IEEE_binary128_le
+#elif (defined(HAVE_LDOUBLE_IEEE_DOUBLE_LE) || \
+       defined(HAVE_LDOUBLE_IEEE_DOUBLE_BE))
+    #define NPY_LONGDOUBLE_BINFMT IEEE_binary64
+#elif defined(HAVE_LDOUBLE_IBM_DOUBLE_DOUBLE_LE)
+    #define NPY_LONGDOUBLE_BINFMT IBM_double_double_le
+#elif defined(HAVE_LDOUBLE_IBM_DOUBLE_DOUBLE_BE)
+    #define NPY_LONGDOUBLE_BINFMT IBM_double_double_be
+#elif defined(HAVE_LDOUBLE_INTEL_EXTENDED_12_BYTES_LE)
+    #define NPY_LONGDOUBLE_BINFMT Intel_extended96
+#elif defined(HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE)
+    #define NPY_LONGDOUBLE_BINFMT Intel_extended128
+#elif defined(HAVE_LDOUBLE_MOTOROLA_EXTENDED_12_BYTES_BE)
+    #define NPY_LONGDOUBLE_BINFMT Motorola_extended96
+#else
+    #error No long double representation defined
+#endif
+
 typedef enum DigitMode
 {
     /* Round digits to print shortest uniquely identifiable number. */
@@ -65,15 +91,22 @@ typedef enum TrimMode
     TrimMode_DptZeros,     /* trim trailing zeros & trailing decimal point */
 } TrimMode;
 
-PyObject *
-Dragon4_Positional_AnySize(void *val, size_t size, DigitMode digit_mode,
-                           CutoffMode cutoff_mode, int precision, int sign,
-                           TrimMode trim, int pad_left, int pad_right);
+#define make_dragon4_typedecl(Type, npy_type, format) \
+\
+PyObject *\
+Dragon4_Positional_##Type(npy_type *val, DigitMode digit_mode,\
+                   CutoffMode cutoff_mode, int precision,\
+                   int sign, TrimMode trim, int pad_left, int pad_right);\
+PyObject *\
+Dragon4_Scientific_##Type(npy_type *val, DigitMode digit_mode, int precision,\
+                   int sign, TrimMode trim, int pad_left, int exp_digits);
 
-PyObject *
-Dragon4_Scientific_AnySize(void *val, size_t size, DigitMode digit_mode,
-                           int precision, int sign, TrimMode trim,
-                           int pad_left, int pad_right);
+make_dragon4_typedecl(Half, npy_half, NPY_HALF_BINFMT)
+make_dragon4_typedecl(Float, npy_float, NPY_FLOAT_BINFMT)
+make_dragon4_typedecl(Double, npy_double, NPY_DOUBLE_BINFMT)
+make_dragon4_typedecl(LongDouble, npy_longdouble, NPY_LONGDOUBLE_BINFMT)
+
+#undef make_dragon4_typedecl
 
 PyObject *
 Dragon4_Positional(PyObject *obj, DigitMode digit_mode, CutoffMode cutoff_mode,
