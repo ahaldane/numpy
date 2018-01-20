@@ -29,7 +29,7 @@
  */
 
 #include "dragon4.h"
-#include <numpy/npy_common.h>
+#include "numpy/npy_common.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -2730,3 +2730,5 @@ Dragon4_Scientific(PyObject *obj, DigitMode digit_mode, int precision,
                                       digit_mode, precision,
                                       sign, trim, pad_left, exp_digits);
 }
+
+#undef DEBUG_ASSERT

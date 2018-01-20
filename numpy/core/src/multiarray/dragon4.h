@@ -39,6 +39,7 @@
 #include "npy_config.h"
 #include "npy_pycompat.h"
 #include "numpy/arrayscalars.h"
+#include "numpy/npy_common.h"
 
 typedef enum DigitMode
 {
