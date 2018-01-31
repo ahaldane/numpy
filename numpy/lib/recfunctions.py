@@ -96,7 +96,7 @@ def get_fieldspec(dtype):
         fields = ((name, dtype.fields[name]) for name in dtype.names)
         # keep any titles, if present
         return [
-            (name if len(f) == 2 else (f[2], name), f[0]) 
+            (name if len(f) == 2 else (f[2], name), f[0])
             for name, f in fields
         ]
 
@@ -731,9 +731,9 @@ def rec_append_fields(base, names, data, dtypes=None):
     return append_fields(base, names, data=data, dtypes=dtypes,
                          asrecarray=True, usemask=False)
 
-def repack_fields(a, align=False, recurse=True):
+def repack_fields(a, align=False, recurse=False):
     """
-    Return a copy of a structured array with fields re-packed in memory.
+    Return a structured array with fields re-packed in memory.
 
     The memory layout of structured datatypes allows fields at arbitrary
     byte offsets. This means the fields can be separated by padding bytes,
@@ -766,7 +766,7 @@ def repack_fields(a, align=False, recurse=True):
     Returns
     -------
     repacked : ndarray or dtype
-       Copy of a with fields repacked.
+       Copy of a with fields repacked, or a itself if no repacking was needed.
 
     Examples
     --------
@@ -779,33 +779,240 @@ def repack_fields(a, align=False, recurse=True):
     >>> dt
     dtype({'names':['f0','f1','f2'], 'formats':['u1','<i4','<f8'], 'offsets':[0,4,8], 'itemsize':16}, align=True)
     >>> print_offsets(dt)
-    ('offsets:', [0, 4, 8])
-    ('itemsize:', 16)
-    >>> packed_dt = np.repack_fields(dt)
+    offsets: [0, 4, 8]
+    itemsize: 16
+    >>> packed_dt = repack_fields(dt)
     >>> packed_dt
     dtype([('f0', 'u1'), ('f1', '<i4'), ('f2', '<f8')])
     >>> print_offsets(packed_dt)
-    ('offsets:', [0, 1, 5])
-    ('itemsize:', 13)
+    offsets: [0, 1, 5]
+    itemsize: 13
 
     """
     if not isinstance(a, np.dtype):
-        return a.astype(repack_fields(a.dtype, align=align, recurse=recurse))
+        dt = repack_fields(a.dtype, align=align, recurse=recurse)
+        return a.astype(dt, copy=False)
 
     if a.names is None:
         raise ValueError("a must be or have a structured dtype")
 
-    fields = [a.fields[name] for name in a.names]
-    if recurse:
-        formats = [repack_fields(f[0], align=align, recurse=True)
-                   if f[0].names else f[0] for f in fields]
-    else:
-        formats = [f[0] for f in fields]
-    titles = [f[2] if len(f) == 3 else None for f in fields]
+    fieldinfo = []
+    for name in a.names:
+        tup = a.fields[name]
+        if recurse:
+            fmt = repack_fields(tup[0], align=align, recurse=True)
+        else:
+            fmt = tup[0]
+        title = tup[2] if len(tup) == 3 else None
+        fieldinfo.append((name, fmt, title))
 
-    return np.dtype({'names': a.names,
-                     'formats': formats,
-                     'titles': titles}, align=align)
+    names, formats, titles = zip(*fieldinfo)
+    dt = np.dtype({'names': names,
+                   'formats': formats,
+                   'titles': titles}, align=align)
+    return np.dtype((a.type, dt))
+
+def _get_fields_and_offsets(dt, offset=0):
+    """
+    Returns a flat list of (name, dtype, count, offset) tuples of all the
+    scalar fields in the dtype "dt", including nested fields, in left
+    to right order.
+    """
+    fields = []
+    for name in dt.names:
+        field = dt.fields[name]
+        if sdt[0].names is None:
+            fields.append((name, sdt[0], np.product(sdt[0].shape),
+                           sdt[1] + offset))
+        else:
+            fields.extend(_get_fields_and_offsets(sdt[0], sdt[1] + offset))
+    return fields
+
+def structured_to_unstructured(arr, dtype=None):
+    """
+    Converts and n-D structured array into an (n+1)-D unstructured array.
+
+    The new array will have a new last dimension equal in size to the
+    number of field-elements of the input array. If not supplied, the output
+    datatype is determined from the numpy type promotion rules applied to all
+    the field datatypes.
+
+    Nested fields, as well as each element of any subarray fields, all count
+    as a single field-elements.
+
+    Parameters
+    ----------
+    arr : ndarray
+       Structured array or dtype to convert.
+    dtype : dtype, optional
+       The dtype of the output unstructured array
+
+    Returns
+    -------
+    unstructured : ndarray
+       Unstructured array with one more dimension.
+
+    Examples
+    --------
+
+    >>> a = np.zeros(4, dtype=[('a', 'i4'), ('b', 'f4,u2'), ('c', 'f4', 2)])
+    >>> a
+    array([(0, (0., 0), [0., 0.]), (0, (0., 0), [0., 0.]),
+           (0, (0., 0), [0., 0.]), (0, (0., 0), [0., 0.])],
+          dtype=[('a', '<i4'), ('b', [('f0', '<f4'), ('f1', '<u2')]), ('c', '<f4', (2,))])
+    >>> structured_to_unstructured(arr)
+    array([[0., 0., 0., 0., 0.],
+           [0., 0., 0., 0., 0.],
+           [0., 0., 0., 0., 0.],
+           [0., 0., 0., 0., 0.]])
+
+    >>> b = np.array([(1, 2, 5), (4, 5, 7), (7, 8 ,11), (10, 11, 12)],
+    ...              dtype=[('x', 'i4'), ('y', 'f4'), ('z', 'f8')])
+    >>> np.mean(structured_to_unstructured(b[['x', 'z']]), axis=-1)
+    array([ 3. ,  5.5,  9. , 11. ])
+
+    """
+    if not arr.dtype.names:
+        raise ValueError('arr must be a structured array')
+
+    fields = _get_fields_and_offsets(arr.dtype)
+    n_elem = sum(f[2] for f in fields)
+
+    if dtype is None:
+        out_dtype = np.result_type(*[f[1].base for f in fields])
+    else:
+        out_dtype = dtype
+
+    out = np.empty(arr.shape + (n_elem,), dtype=out_dtype)
+
+    n = 0
+    for name, dt, count, offset in fields:
+        if count == 1:
+            out[...,n] = arr.getfield(dt, offset)
+            n += 1
+        else:
+            out[...,n:n+count] = arr.getfield(dt, offset)
+            n += count
+
+    return out
+
+def unstructured_to_structured(arr, dtype=None, names=None, align=False):
+    """
+    Converts and n-D unstructured array into an (n-1)-D structured array.
+
+    The last dimension of the array is converted into a structure, with
+    number of field-elements equal to the size of the last dimension of the
+    input array. By default all fields will have the same dtype as the
+    original array, but you may supply a custom dtype with the right
+    number of fields-elements.
+
+    Nested fields, as well as each element of any subarray fields, all count
+    towards the number of field-elements.
+
+    Parameters
+    ----------
+    arr : ndarray
+       Unstructured array or dtype to convert.
+    dtype : dtype, optional
+       The structured dtype of the output array
+    names : list of strings, optional
+       If dtype is not supplied, this specifies the field names for the output
+       dtype, in order. The field dtypes will be the same as the input array.
+    align : boolean, optional
+       If dtype is not supplied, whether to create an aligned memory layout.
+
+    Returns
+    -------
+    structured : ndarray
+       Structured array with fewer dimensions.
+
+    Examples
+    --------
+
+    >>> dt = np.dtype([('a', 'i4'), ('b', 'f4,u2'), ('c', 'f4', 2)])
+    >>> a = np.arange(20).reshape((4,5))
+    >>> a
+    array([[ 0,  1,  2,  3,  4],
+           [ 5,  6,  7,  8,  9],
+           [10, 11, 12, 13, 14],
+           [15, 16, 17, 18, 19]])
+    >>> unstructured_to_structured(a, dt)
+    array([( 0, ( 1.,  2), [ 3.,  4.]), ( 5, ( 6.,  7), [ 8.,  9.]),
+           (10, (11., 12), [13., 14.]), (15, (16., 17), [18., 19.])],
+          dtype=[('a', '<i4'), ('b', [('f0', '<f4'), ('f1', '<u2')]), ('c', '<f4', (2,))])
+
+    """
+    if arr.shape == ():
+        raise ValueError('arr must have at least one dimension')
+    n_elem = arr.shape[-1]
+
+    if dtype is None:
+        if names is None:
+            names = ['f{}'.format(n) for n in range(n_elem)]
+        out_dtype = np.dtype([(n, arr.dtype) for n in names], align=align)
+        fields = _get_fields_and_offsets(out_dtype)
+    else:
+        if names is not None:
+            raise ValueError("don't supply both dtype and names")
+        # sanity check of the input dtype
+        fields = _get_fields_and_offsets(dtype)
+        n_fields = sum(f[2] for f in fields)
+        if n_fields != n_elem:
+            raise ValueError('The length of the last dimension of arr must '
+                             'be equal to the number of fields in dtype')
+        out_dtype = dtype
+
+    out = np.empty(arr.shape[:-1], dtype=out_dtype)
+
+    n = 0
+    for name, dt, count, offset in fields:
+        if count == 1:
+            out.setfield(arr[...,n], dt, offset)
+            n += 1
+        else:
+            out.setfield(arr[...,n:n+count], dt, offset)
+            n += count
+
+    return out
+
+def apply_along_fields(func, arr):
+    """
+    Apply function 'func' as a reduction across fields of a structured array.
+
+    This is similar to `apply_along_axis`, but treats the fields of a
+    structured array as an extra axis.
+
+    Parameters
+    ----------
+    func : function
+       Function to apply on the "field" dimension. This function must
+       support an `axis` argument, like np.mean, np.sum, etc.
+    arr : ndarray
+       Structured array for which to apply func.
+
+    Returns
+    -------
+    out : ndarray
+       Result of the recution operation
+
+    Examples
+    --------
+
+    >>> b = np.array([(1, 2, 5), (4, 5, 7), (7, 8 ,11), (10, 11, 12)],
+    ...              dtype=[('x', 'i4'), ('y', 'f4'), ('z', 'f8')])
+    >>> apply_along_fields(np.mean, b)
+    array([ 2.66666667,  5.33333333,  8.66666667, 11.        ])
+    >>> apply_along_fields(np.mean, b[['x', 'z']])
+    array([ 3. ,  5.5,  9. , 11. ])
+
+    """
+    if not arr.dtype.names:
+        raise ValueError('arr must be a structured array')
+
+    uarr = structured_to_unstructured(arr)
+    return func(uarr, axis=-1)
+    # works and avoids axis requirement, but very, very slow:
+    #return np.apply_along_axis(func, -1, uarr)
 
 def stack_arrays(arrays, defaults=None, usemask=True, asrecarray=False,
                  autoconvert=False):

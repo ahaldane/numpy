@@ -200,6 +200,10 @@ class TestRecFunctions(object):
         assert_equal(repack_fields(a).itemsize, 13)
         assert_equal(repack_fields(repack_fields(dt), align=True), dt)
 
+        # make sure type is preserved
+        dt = np.dtype((np.record, dt))
+        assert_(repack_fields(dt).type is np.record)
+
 
 class TestRecursiveFillFields(object):
     # Test recursive_fill_fields.
