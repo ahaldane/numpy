@@ -189,8 +189,10 @@ typedef struct _tagPyUFuncObject {
          * This was blocked off to be the "new" inner loop selector in 1.7,
          * but this was never implemented. (This is also why the above
          * selector is called the "legacy" selector.)
+         *
+         * Now used to store __dict__ for monkey-patching.
          */
-        void *reserved2;
+        PyObject *attrdict;
         /*
          * A function which returns a masked inner loop for the ufunc.
          */

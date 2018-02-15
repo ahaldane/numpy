@@ -12,6 +12,19 @@ from numpy.core import umath as um
 from numpy.core.numeric import asanyarray
 from numpy.core import numerictypes as nt
 
+for ufunc, anyu, allu in [
+        (um.greater, um._any_greater, um._all_greater),
+        (um.greater_equal, um._any_greater_equal, um._all_greater_equal),
+        (um.less, um._any_less, um._all_less),
+        (um.less_equal, um._any_less_equal, um._all_less_equal),
+        (um.not_equal, um._any_not_equal, um._all_not_equal),
+        (um.equal, um._any_equal, um._all_equal)]:
+        #(um.logical_and, um._any_logical_and, um._all_logical_and),
+        #(um.logical_or, um._any_logical_or, um._all_logical_or),
+        #(um.logical_not, um._any_logical_not, um._all_logical_not)]:
+    ufunc.any = anyu
+    ufunc.all = allu
+
 # save those O(100) nanoseconds!
 umr_maximum = um.maximum.reduce
 umr_minimum = um.minimum.reduce

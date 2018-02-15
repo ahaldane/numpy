@@ -27,6 +27,7 @@
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 
 #include "Python.h"
+#include <stddef.h>
 
 #include "npy_config.h"
 
@@ -4639,7 +4640,7 @@ PyUFunc_FromFuncAndDataAndSignature(PyUFuncGenericFunction *func, void **data,
     PyObject_Init((PyObject *)ufunc, &PyUFunc_Type);
 
     ufunc->reserved1 = 0;
-    ufunc->reserved2 = NULL;
+    ufunc->attrdict = NULL;
 
     ufunc->nin = nin;
     ufunc->nout = nout;
@@ -5759,6 +5760,9 @@ static PyGetSetDef ufunc_getset[] = {
     {"types",
         (getter)ufunc_get_types,
         NULL, NULL, NULL},
+    {"__dict__",
+        PyObject_GenericGetDict, PyObject_GenericSetDict,
+        NULL, NULL},
     {"__name__",
         (getter)ufunc_get_name,
         NULL, NULL, NULL},
@@ -5821,7 +5825,7 @@ NPY_NO_EXPORT PyTypeObject PyUFunc_Type = {
     0,                                          /* tp_dict */
     0,                                          /* tp_descr_get */
     0,                                          /* tp_descr_set */
-    0,                                          /* tp_dictoffset */
+    offsetof(PyUFuncObject, attrdict),          /* tp_dictoffset */
     0,                                          /* tp_init */
     0,                                          /* tp_alloc */
     0,                                          /* tp_new */

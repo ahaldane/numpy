@@ -519,7 +519,7 @@ void InitLogicalGufuncs(PyObject *dictionary,
 
         ((PyUFuncObject *)f)->type_resolver =
             &PyUFunc_SimpleBinaryComparisonTypeResolver;
-        PyDict_SetItemString(dictionary, "@NAME@", f);
+        PyDict_SetItemString(dictionary, "_@NAME@", f);
         Py_DECREF(f);
 
     }; /* close bracket surrounding inner repeat */
