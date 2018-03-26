@@ -1069,7 +1069,7 @@ BigInt_ShiftLeft(BigInt *result, npy_uint32 shift)
  * There is some more documentation of these changes on Ryan Juckett's website
  * at http://www.ryanjuckett.com/programming/printing-floating-point-numbers/
  *
- * This code also has a few implementation differences from Jyan Juckett's
+ * This code also has a few implementation differences from Ryan Juckett's
  * version:
  *  1. fixed overflow problems when mantissa was 64 bits (in float128 types),
  *     by replacing multiplication by 2 or 4 by BigInt_ShiftLeft calls.
@@ -3078,10 +3078,10 @@ Dragon4_Scientific_##Type(npy_type *val, DigitMode digit_mode, int precision,\
 #define make_dragon4_typefuncs(Type, npy_type, format) \
         make_dragon4_typefuncs_inner(Type, npy_type, format)
 
-make_dragon4_typefuncs(Half, npy_half, NPY_HALF_BINFMT)
-make_dragon4_typefuncs(Float, npy_float, NPY_FLOAT_BINFMT)
-make_dragon4_typefuncs(Double, npy_double, NPY_DOUBLE_BINFMT)
-make_dragon4_typefuncs(LongDouble, npy_longdouble, NPY_LONGDOUBLE_BINFMT)
+make_dragon4_typefuncs(Half, npy_half, NPY_HALF_BINFMT_NAME)
+make_dragon4_typefuncs(Float, npy_float, NPY_FLOAT_BINFMT_NAME)
+make_dragon4_typefuncs(Double, npy_double, NPY_DOUBLE_BINFMT_NAME)
+make_dragon4_typefuncs(LongDouble, npy_longdouble, NPY_LONGDOUBLE_BINFMT_NAME)
 
 #undef make_dragon4_typefuncs
 #undef make_dragon4_typefuncs_inner

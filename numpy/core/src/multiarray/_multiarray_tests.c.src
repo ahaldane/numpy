@@ -1841,26 +1841,27 @@ PrintFloat_Printf_g(PyObject *obj, int precision)
 
     if (PyArray_IsScalar(obj, Half)) {
         npy_half x = ((PyHalfScalarObject *)obj)->obval;
-        PyOS_snprintf(str, 1024, "%.*g", precision, npy_half_to_double(x));
+        PyOS_snprintf(str, sizeof(str), "%.*g", precision,
+                      npy_half_to_double(x));
     }
     else if (PyArray_IsScalar(obj, Float)) {
         npy_float x = ((PyFloatScalarObject *)obj)->obval;
-        PyOS_snprintf(str, 1024, "%.*g", precision, x);
+        PyOS_snprintf(str, sizeof(str), "%.*g", precision, x);
     }
     else if (PyArray_IsScalar(obj, Double)) {
         npy_double x = ((PyDoubleScalarObject *)obj)->obval;
-        PyOS_snprintf(str, 1024, "%.*g", precision, x);
+        PyOS_snprintf(str, sizeof(str), "%.*g", precision, x);
     }
     else if (PyArray_IsScalar(obj, LongDouble)) {
         npy_longdouble x = ((PyLongDoubleScalarObject *)obj)->obval;
-        PyOS_snprintf(str, 1024, "%.*Lg", precision, x);
+        PyOS_snprintf(str, sizeof(str), "%.*Lg", precision, x);
     }
     else{
         double val = PyFloat_AsDouble(obj);
         if (PyErr_Occurred()) {
             return NULL;
         }
-        PyOS_snprintf(str, 1024, "%.*g", precision, val);
+        PyOS_snprintf(str, sizeof(str), "%.*g", precision, val);
     }
 
     return PyUString_FromString(str);
@@ -1871,7 +1872,7 @@ static PyObject *
 printf_float_g(PyObject *NPY_UNUSED(dummy), PyObject *args, PyObject *kwds)
 {
     PyObject *obj;
-    int precision=-1;
+    int precision;
 
     if (!PyArg_ParseTuple(args,"Oi:printf_float_g", &obj, &precision)) {
         return NULL;

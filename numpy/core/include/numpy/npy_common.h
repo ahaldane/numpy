@@ -865,7 +865,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex64ArrType_Type PyCDoubleArrType_Type
 #define NPY_FLOAT32_FMT NPY_DOUBLE_FMT
 #define NPY_COMPLEX64_FMT NPY_CDOUBLE_FMT
-#define NPY_DOUBLE_BINFMT IEEE_binary32
+#define NPY_DOUBLE_BINFMT_NAME IEEE_binary32
 #endif
 #elif NPY_BITSOF_DOUBLE == 64
 #ifndef NPY_FLOAT64
@@ -879,7 +879,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex128ArrType_Type PyCDoubleArrType_Type
 #define NPY_FLOAT64_FMT NPY_DOUBLE_FMT
 #define NPY_COMPLEX128_FMT NPY_CDOUBLE_FMT
-#define NPY_DOUBLE_BINFMT IEEE_binary64
+#define NPY_DOUBLE_BINFMT_NAME IEEE_binary64
 #endif
 #elif NPY_BITSOF_DOUBLE == 80
 #ifndef NPY_FLOAT80
@@ -893,7 +893,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex160ArrType_Type PyCDoubleArrType_Type
 #define NPY_FLOAT80_FMT NPY_DOUBLE_FMT
 #define NPY_COMPLEX160_FMT NPY_CDOUBLE_FMT
-#define NPY_DOUBLE_BINFMT Intel_extended80
+#define NPY_DOUBLE_BINFMT_NAME Intel_extended80
 #endif
 #elif NPY_BITSOF_DOUBLE == 96
 #ifndef NPY_FLOAT96
@@ -907,7 +907,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex192ArrType_Type PyCDoubleArrType_Type
 #define NPY_FLOAT96_FMT NPY_DOUBLE_FMT
 #define NPY_COMPLEX192_FMT NPY_CDOUBLE_FMT
-#define NPY_DOUBLE_BINFMT Intel_extended96
+#define NPY_DOUBLE_BINFMT_NAME Intel_extended96
 #endif
 #elif NPY_BITSOF_DOUBLE == 128
 #ifndef NPY_FLOAT128
@@ -921,7 +921,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex256ArrType_Type PyCDoubleArrType_Type
 #define NPY_FLOAT128_FMT NPY_DOUBLE_FMT
 #define NPY_COMPLEX256_FMT NPY_CDOUBLE_FMT
-#define NPY_DOUBLE_BINFMT Intel_extended128
+#define NPY_DOUBLE_BINFMT_NAME Intel_extended128
 #endif
 #endif
 
@@ -939,7 +939,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex64ArrType_Type PyCFloatArrType_Type
 #define NPY_FLOAT32_FMT NPY_FLOAT_FMT
 #define NPY_COMPLEX64_FMT NPY_CFLOAT_FMT
-#define NPY_FLOAT_BINFMT IEEE_binary32
+#define NPY_FLOAT_BINFMT_NAME IEEE_binary32
 #endif
 #elif NPY_BITSOF_FLOAT == 64
 #ifndef NPY_FLOAT64
@@ -953,7 +953,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex128ArrType_Type PyCFloatArrType_Type
 #define NPY_FLOAT64_FMT NPY_FLOAT_FMT
 #define NPY_COMPLEX128_FMT NPY_CFLOAT_FMT
-#define NPY_FLOAT_BINFMT IEEE_binary64
+#define NPY_FLOAT_BINFMT_NAME IEEE_binary64
 #endif
 #elif NPY_BITSOF_FLOAT == 80
 #ifndef NPY_FLOAT80
@@ -967,7 +967,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex160ArrType_Type PyCFloatArrType_Type
 #define NPY_FLOAT80_FMT NPY_FLOAT_FMT
 #define NPY_COMPLEX160_FMT NPY_CFLOAT_FMT
-#define NPY_FLOAT_BINFMT Intel_extended80
+#define NPY_FLOAT_BINFMT_NAME Intel_extended80
 #endif
 #elif NPY_BITSOF_FLOAT == 96
 #ifndef NPY_FLOAT96
@@ -981,7 +981,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex192ArrType_Type PyCFloatArrType_Type
 #define NPY_FLOAT96_FMT NPY_FLOAT_FMT
 #define NPY_COMPLEX192_FMT NPY_CFLOAT_FMT
-#define NPY_FLOAT_BINFMT Intel_extended96
+#define NPY_FLOAT_BINFMT_NAME Intel_extended96
 #endif
 #elif NPY_BITSOF_FLOAT == 128
 #ifndef NPY_FLOAT128
@@ -995,7 +995,7 @@ typedef struct { npy_longdouble real, imag; } npy_clongdouble;
 #    define PyComplex256ArrType_Type PyCFloatArrType_Type
 #define NPY_FLOAT128_FMT NPY_FLOAT_FMT
 #define NPY_COMPLEX256_FMT NPY_CFLOAT_FMT
-#define NPY_FLOAT_BINFMT Intel_extended128
+#define NPY_FLOAT_BINFMT_NAME Intel_extended128
 #endif
 #endif
 
