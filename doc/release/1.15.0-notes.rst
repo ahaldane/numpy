@@ -325,6 +325,16 @@ Increased performance in ``random.permutation`` for multidimensional arrays
 ``permutation`` uses the fast path in ``random.shuffle`` for all input
 array dimensions.  Previously the fast path was only used for 1-d arrays.
 
+float128 values now print correctly on ppc systems
+--------------------------------------------------
+Previously printing float128 values was buggy, since the special double-double
+floating-point-format of float128 on these systems was not accounted for.
+float128s now print with correct rounding and uniqueness.
+
+Relatedly, ppc users should upgrade their glibc if it is <=2.23. On ppc, these
+versions of glibc's malloc often allocates misaligned memory which can crash
+numpy when using float128 values.
+
 
 Changes
 =======

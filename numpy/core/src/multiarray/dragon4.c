@@ -145,6 +145,47 @@ typedef struct BigInt {
     npy_uint32 blocks[c_BigInt_MaxBlocks];
 } BigInt;
 
+/*
+ * Dummy implementation of a memory manager for BigInts. Currently, only
+ * supports a single call to Dragon4 and is not theadsafe, so dragon4 is not
+ * re-entrant.
+ *
+ * We at least try to raise an error if dragon4 re-enters, and this code serves
+ * as a placeholder if we want to make it re-entrant in the future: We would
+ * need a way of aquiring a lock, probably using python's threading.Lock. Then
+ * probably it will be fastest/easiest to keep the code mostly as is, but
+ * return malloc'd memory if _bigint_static_in_use is true, and free it later.
+ * That way the first thread is fast, further threads get the malloc slowdown.
+ *
+ * Each call to dragon4 uses 7 BigInts.
+ */
+#define BIGINT_DRAGON4_GROUPSIZE 7
+static int _bigint_static_in_use = 0;
+static BigInt _bigint_static[BIGINT_DRAGON4_GROUPSIZE];
+
+static BigInt*
+get_dragon4_bigint_scratch(void) {
+    /*
+     * this test+set is not atomic/threadsafe, but hopefully it is enough to
+     * warn anyone who does try to re-enter
+     */
+    if (_bigint_static_in_use) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "numpy float printing code is not re-entrant. "
+            "Ping the devs to fix it.");
+        return NULL;
+    }
+    _bigint_static_in_use = 1;
+
+    /* in this dummy implementation we only return the static allocation */
+    return _bigint_static;
+}
+
+static void
+free_dragon4_bigint_scratch(BigInt *mem){
+    _bigint_static_in_use = 0;
+}
+
 /* Copy integer */
 static void
 BigInt_Copy(BigInt *dst, const BigInt *src)
@@ -713,13 +754,11 @@ static BigInt g_PowerOf10_Big[] =
 
 /* result = 10^exponent */
 static void
-BigInt_Pow10(BigInt *result, npy_uint32 exponent)
+BigInt_Pow10(BigInt *result, npy_uint32 exponent, BigInt *temp)
 {
-    /* create two temporary values to reduce large integer copy operations */
-    static BigInt temp1;
-    static BigInt temp2;
-    BigInt *curTemp = &temp1;
-    BigInt *pNextTemp = &temp2;
+    /* use two temporary values to reduce large integer copy operations */
+    BigInt *curTemp = result;
+    BigInt *pNextTemp = temp;
     npy_uint32 smallExponent;
     npy_uint32 tableIdx = 0;
 
@@ -757,19 +796,18 @@ BigInt_Pow10(BigInt *result, npy_uint32 exponent)
     }
 
     /* output the result */
-    BigInt_Copy(result, curTemp);
+    if (curTemp != result) {
+        BigInt_Copy(result, curTemp);
+    }
 }
 
-/* result = in * 10^exponent */
+/* in = in * 10^exponent */
 static void
-BigInt_MultiplyPow10(BigInt *result, BigInt *in, npy_uint32 exponent)
+BigInt_MultiplyPow10(BigInt *in, npy_uint32 exponent, BigInt *temp)
 {
 
-    /* create two temporary values to reduce large integer copy operations */
-    static BigInt temp1;
-    static BigInt temp2;
-    BigInt *curTemp = &temp1;
-    BigInt *pNextTemp = &temp2;
+    /* use two temporary values to reduce large integer copy operations */
+    BigInt *curTemp, *pNextTemp;
     npy_uint32 smallExponent;
     npy_uint32 tableIdx = 0;
 
@@ -782,10 +820,13 @@ BigInt_MultiplyPow10(BigInt *result, BigInt *in, npy_uint32 exponent)
      */
     smallExponent = exponent & bitmask_u32(3);
     if (smallExponent != 0) {
-        BigInt_Multiply_int(curTemp, in, g_PowerOf10_U32[smallExponent]);
+        BigInt_Multiply_int(temp, in, g_PowerOf10_U32[smallExponent]);
+        curTemp = temp;
+        pNextTemp = in;
     }
     else {
-        BigInt_Copy(curTemp, in);
+        curTemp = in;
+        pNextTemp = temp;
     }
 
     /* remove the low bits that we used for the 32-bit lookup table */
@@ -812,7 +853,9 @@ BigInt_MultiplyPow10(BigInt *result, BigInt *in, npy_uint32 exponent)
     }
 
     /* output the result */
-    BigInt_Copy(result, curTemp);
+    if (curTemp != in){
+        BigInt_Copy(in, curTemp);
+    }
 }
 
 /* result = 2^exponent */
@@ -1081,7 +1124,8 @@ BigInt_ShiftLeft(BigInt *result, npy_uint32 shift)
  *     code, using the isEven variable.
  *
  * Arguments:
- *   * mantissa - value significand
+ *   * bigints - memory to store all bigints needed (6) for dragon4 computation.
+ *               The first BigInt should be filled in with the mantissa.
  *   * exponent - value exponent in base 2
  *   * mantissaBit - index of the highest set mantissa bit
  *   * hasUnequalMargins - is the high margin twice as large as the low margin
@@ -1094,7 +1138,7 @@ BigInt_ShiftLeft(BigInt *result, npy_uint32 shift)
  * Returns the number of digits written to the output buffer.
  */
 static npy_uint32
-Dragon4(BigInt *mantissa, const npy_int32 exponent,
+Dragon4(BigInt *bigints, const npy_int32 exponent,
         const npy_uint32 mantissaBit, const npy_bool hasUnequalMargins,
         const DigitMode digitMode, const CutoffMode cutoffMode,
         npy_int32 cutoffNumber, char *pOutBuffer,
@@ -1112,15 +1156,16 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
      *
      * scaledMarginHigh will point to scaledMarginLow in the case they must be
      * equal to each other, otherwise it will point to optionalMarginHigh.
-     *
-     * The BigInts are static to save stack space, so this function
-     * is ***not re-entrant***.
      */
-    static BigInt scale;
-    static BigInt scaledValue;
-    static BigInt scaledMarginLow;
+    BigInt *mantissa = &bigints[0];  /* the only initialized bigint */
+    BigInt *scale = &bigints[1];
+    BigInt *scaledValue = &bigints[2];
+    BigInt *scaledMarginLow = &bigints[3];
     BigInt *scaledMarginHigh;
-    static BigInt optionalMarginHigh;
+    BigInt *optionalMarginHigh = &bigints[4];
+
+    BigInt *temp1 = &bigints[5];
+    BigInt *temp2 = &bigints[6];
 
     const npy_float64 log10_2 = 0.30102999566398119521373889472449;
     npy_int32 digitExponent, cutoffExponent, hiBlock;
@@ -1141,7 +1186,7 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
         return 1;
     }
 
-    BigInt_Copy(&scaledValue, mantissa);
+    BigInt_Copy(scaledValue, mantissa);
 
     if (hasUnequalMargins) {
         /* if we have no fractional component */
@@ -1156,13 +1201,13 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
              */
 
             /* scaledValue      = 2 * 2 * mantissa*2^exponent */
-            BigInt_ShiftLeft(&scaledValue, exponent + 2);
+            BigInt_ShiftLeft(scaledValue, exponent + 2);
             /* scale            = 2 * 2 * 1 */
-            BigInt_Set_uint32(&scale,  4);
+            BigInt_Set_uint32(scale,  4);
             /* scaledMarginLow  = 2 * 2^(exponent-1) */
-            BigInt_Pow2(&scaledMarginLow, exponent);
+            BigInt_Pow2(scaledMarginLow, exponent);
             /* scaledMarginHigh = 2 * 2 * 2^(exponent-1) */
-            BigInt_Pow2(&optionalMarginHigh, exponent + 1);
+            BigInt_Pow2(optionalMarginHigh, exponent + 1);
         }
         /* else we have a fractional exponent */
         else {
@@ -1172,27 +1217,27 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
              */
 
             /* scaledValue      = 2 * 2 * mantissa */
-            BigInt_ShiftLeft(&scaledValue, 2);
+            BigInt_ShiftLeft(scaledValue, 2);
             /* scale            = 2 * 2 * 2^(-exponent) */
-            BigInt_Pow2(&scale, -exponent + 2);
+            BigInt_Pow2(scale, -exponent + 2);
             /* scaledMarginLow  = 2 * 2^(-1) */
-            BigInt_Set_uint32(&scaledMarginLow, 1);
+            BigInt_Set_uint32(scaledMarginLow, 1);
             /* scaledMarginHigh = 2 * 2 * 2^(-1) */
-            BigInt_Set_uint32(&optionalMarginHigh, 2);
+            BigInt_Set_uint32(optionalMarginHigh, 2);
         }
 
         /* the high and low margins are different */
-        scaledMarginHigh = &optionalMarginHigh;
+        scaledMarginHigh = optionalMarginHigh;
     }
     else {
         /* if we have no fractional component */
         if (exponent > 0) {
             /* scaledValue     = 2 * mantissa*2^exponent */
-            BigInt_ShiftLeft(&scaledValue, exponent + 1);
+            BigInt_ShiftLeft(scaledValue, exponent + 1);
             /* scale           = 2 * 1 */
-            BigInt_Set_uint32(&scale, 2);
+            BigInt_Set_uint32(scale, 2);
             /* scaledMarginLow = 2 * 2^(exponent-1) */
-            BigInt_Pow2(&scaledMarginLow, exponent);
+            BigInt_Pow2(scaledMarginLow, exponent);
         }
         /* else we have a fractional exponent */
         else {
@@ -1202,15 +1247,15 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
              */
 
             /* scaledValue     = 2 * mantissa */
-            BigInt_ShiftLeft(&scaledValue, 1);
+            BigInt_ShiftLeft(scaledValue, 1);
             /* scale           = 2 * 2^(-exponent) */
-            BigInt_Pow2(&scale, -exponent + 1);
+            BigInt_Pow2(scale, -exponent + 1);
             /* scaledMarginLow = 2 * 2^(-1) */
-            BigInt_Set_uint32(&scaledMarginLow, 1);
+            BigInt_Set_uint32(scaledMarginLow, 1);
         }
 
         /* the high and low margins are equal */
-        scaledMarginHigh = &scaledMarginLow;
+        scaledMarginHigh = scaledMarginLow;
     }
 
     /*
@@ -1257,31 +1302,29 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
     /* Divide value by 10^digitExponent. */
     if (digitExponent > 0) {
         /* A positive exponent creates a division so we multiply the scale. */
-        static BigInt temp;
-        BigInt_MultiplyPow10(&temp, &scale, digitExponent);
-        BigInt_Copy(&scale, &temp);
+        BigInt_MultiplyPow10(scale, digitExponent, temp1);
     }
     else if (digitExponent < 0) {
         /*
          * A negative exponent creates a multiplication so we multiply up the
          * scaledValue, scaledMarginLow and scaledMarginHigh.
          */
-        static BigInt pow10, temp;
-        BigInt_Pow10(&pow10, -digitExponent);
+        BigInt *temp=temp1, *pow10=temp2;
+        BigInt_Pow10(pow10, -digitExponent, temp);
 
-        BigInt_Multiply(&temp, &scaledValue, &pow10);
-        BigInt_Copy(&scaledValue, &temp);
+        BigInt_Multiply(temp, scaledValue, pow10);
+        BigInt_Copy(scaledValue, temp);
 
-        BigInt_Multiply(&temp, &scaledMarginLow, &pow10);
-        BigInt_Copy(&scaledMarginLow, &temp);
+        BigInt_Multiply(temp, scaledMarginLow, pow10);
+        BigInt_Copy(scaledMarginLow, temp);
 
-        if (scaledMarginHigh != &scaledMarginLow) {
-            BigInt_Multiply2(scaledMarginHigh, &scaledMarginLow);
+        if (scaledMarginHigh != scaledMarginLow) {
+            BigInt_Multiply2(scaledMarginHigh, scaledMarginLow);
         }
     }
 
     /* If (value >= 1), our estimate for digitExponent was too low */
-    if (BigInt_Compare(&scaledValue, &scale) >= 0) {
+    if (BigInt_Compare(scaledValue, scale) >= 0) {
         /*
          * The exponent estimate was incorrect.
          * Increment the exponent and don't perform the premultiply needed
@@ -1295,10 +1338,10 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
          * Multiply larger by the output base to prepare for the first loop
          * iteration.
          */
-        BigInt_Multiply10(&scaledValue);
-        BigInt_Multiply10(&scaledMarginLow);
-        if (scaledMarginHigh != &scaledMarginLow) {
-            BigInt_Multiply2(scaledMarginHigh, &scaledMarginLow);
+        BigInt_Multiply10(scaledValue);
+        BigInt_Multiply10(scaledMarginLow);
+        if (scaledMarginHigh != scaledMarginLow) {
+            BigInt_Multiply2(scaledMarginHigh, scaledMarginLow);
         }
     }
 
@@ -1339,8 +1382,8 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
      * to be less than or equal to 429496729 which is the highest number that
      * can be multiplied by 10 without overflowing to a new block.
      */
-    DEBUG_ASSERT(scale.length > 0);
-    hiBlock = scale.blocks[scale.length - 1];
+    DEBUG_ASSERT(scale->length > 0);
+    hiBlock = scale->blocks[scale->length - 1];
     if (hiBlock < 8 || hiBlock > 429496729) {
         npy_uint32 hiBlockLog2, shift;
 
@@ -1358,11 +1401,11 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
         DEBUG_ASSERT(hiBlockLog2 < 3 || hiBlockLog2 > 27);
         shift = (32 + 27 - hiBlockLog2) % 32;
 
-        BigInt_ShiftLeft(&scale, shift);
-        BigInt_ShiftLeft(&scaledValue, shift);
-        BigInt_ShiftLeft(&scaledMarginLow, shift);
-        if (scaledMarginHigh != &scaledMarginLow) {
-            BigInt_Multiply2(scaledMarginHigh, &scaledMarginLow);
+        BigInt_ShiftLeft(scale, shift);
+        BigInt_ShiftLeft(scaledValue, shift);
+        BigInt_ShiftLeft(scaledMarginLow, shift);
+        if (scaledMarginHigh != scaledMarginLow) {
+            BigInt_Multiply2(scaledMarginHigh, scaledMarginLow);
         }
     }
 
@@ -1374,25 +1417,25 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
          * terminate early.
          */
         for (;;) {
-            static BigInt scaledValueHigh;
+            BigInt *scaledValueHigh = temp1;
 
             digitExponent = digitExponent-1;
 
             /* divide out the scale to extract the digit */
             outputDigit =
-                BigInt_DivideWithRemainder_MaxQuotient9(&scaledValue, &scale);
+                BigInt_DivideWithRemainder_MaxQuotient9(scaledValue, scale);
             DEBUG_ASSERT(outputDigit < 10);
 
             /* update the high end of the value */
-            BigInt_Add(&scaledValueHigh, &scaledValue, scaledMarginHigh);
+            BigInt_Add(scaledValueHigh, scaledValue, scaledMarginHigh);
 
             /*
              * stop looping if we are far enough away from our neighboring
              * values or if we have reached the cutoff digit
              */
-            cmp = BigInt_Compare(&scaledValue, &scaledMarginLow);
+            cmp = BigInt_Compare(scaledValue, scaledMarginLow);
             low = isEven ? (cmp <= 0) : (cmp < 0);
-            cmp = BigInt_Compare(&scaledValueHigh, &scale);
+            cmp = BigInt_Compare(scaledValueHigh, scale);
             high = isEven ? (cmp >= 0) : (cmp > 0);
             if (low | high | (digitExponent == cutoffExponent))
                 break;
@@ -1402,10 +1445,10 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
             ++curDigit;
 
             /* multiply larger by the output base */
-            BigInt_Multiply10(&scaledValue);
-            BigInt_Multiply10(&scaledMarginLow);
-            if (scaledMarginHigh != &scaledMarginLow) {
-                BigInt_Multiply2(scaledMarginHigh, &scaledMarginLow);
+            BigInt_Multiply10(scaledValue);
+            BigInt_Multiply10(scaledMarginLow);
+            if (scaledMarginHigh != scaledMarginLow) {
+                BigInt_Multiply2(scaledMarginHigh, scaledMarginLow);
             }
         }
     }
@@ -1423,10 +1466,11 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
 
             /* divide out the scale to extract the digit */
             outputDigit =
-                BigInt_DivideWithRemainder_MaxQuotient9(&scaledValue, &scale);
+                BigInt_DivideWithRemainder_MaxQuotient9(scaledValue, scale);
             DEBUG_ASSERT(outputDigit < 10);
 
-            if ((scaledValue.length == 0) | (digitExponent == cutoffExponent)) {
+            if ((scaledValue->length == 0) |
+                    (digitExponent == cutoffExponent)) {
                 break;
             }
 
@@ -1435,7 +1479,7 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
             ++curDigit;
 
             /* multiply larger by the output base */
-            BigInt_Multiply10(&scaledValue);
+            BigInt_Multiply10(scaledValue);
         }
     }
 
@@ -1453,8 +1497,8 @@ Dragon4(BigInt *mantissa, const npy_int32 exponent,
          *  compare( scale * value, scale * 0.5 )
          *  compare( 2 * scale * value, scale )
          */
-        BigInt_Multiply2_inplace(&scaledValue);
-        compare = BigInt_Compare(&scaledValue, &scale);
+        BigInt_Multiply2_inplace(scaledValue);
+        compare = BigInt_Compare(scaledValue, scale);
         roundDown = compare < 0;
 
         /*
@@ -2139,9 +2183,10 @@ Dragon4_PrintFloat_IEEE_binary16(
     npy_uint32 mantissa;
     npy_int32 exponent;
     npy_uint32 mantissaBit;
-    static BigInt bgmantissa;
     npy_bool hasUnequalMargins;
     char signbit = '\0';
+    BigInt *bigint_scratch, *bgmantissa;
+    npy_uint32 ret;
 
     if (bufferSize == 0) {
         return 0;
@@ -2210,9 +2255,18 @@ Dragon4_PrintFloat_IEEE_binary16(
         hasUnequalMargins  = NPY_FALSE;
     }
 
-    BigInt_Set_uint32(&bgmantissa, mantissa);
-    return Format_floatbits(buffer, bufferSize, &bgmantissa, exponent,
+    bigint_scratch = get_dragon4_bigint_scratch();
+    if (bigint_scratch == NULL) {
+        return -1;
+    }
+    bgmantissa = &bigint_scratch[0];
+
+    BigInt_Set_uint32(bgmantissa, mantissa);
+    ret = Format_floatbits(buffer, bufferSize, bigint_scratch, exponent,
                             signbit, mantissaBit, hasUnequalMargins, opt);
+
+    free_dragon4_bigint_scratch(bigint_scratch);
+    return ret;
 }
 
 /*
@@ -2237,9 +2291,10 @@ Dragon4_PrintFloat_IEEE_binary32(
     npy_uint32 mantissa;
     npy_int32 exponent;
     npy_uint32 mantissaBit;
-    static BigInt bgmantissa;
     npy_bool hasUnequalMargins;
     char signbit = '\0';
+    BigInt *bigint_scratch, *bgmantissa;
+    npy_uint32 ret;
 
     if (bufferSize == 0) {
         return 0;
@@ -2309,9 +2364,18 @@ Dragon4_PrintFloat_IEEE_binary32(
         hasUnequalMargins  = NPY_FALSE;
     }
 
-    BigInt_Set_uint32(&bgmantissa, mantissa);
-    return Format_floatbits(buffer, bufferSize, &bgmantissa, exponent,
+    bigint_scratch = get_dragon4_bigint_scratch();
+    if (bigint_scratch == NULL) {
+        return -1;
+    }
+    bgmantissa = &bigint_scratch[0];
+
+    BigInt_Set_uint32(bgmantissa, mantissa);
+    ret = Format_floatbits(buffer, bufferSize, bigint_scratch, exponent,
                            signbit, mantissaBit, hasUnequalMargins, opt);
+
+    free_dragon4_bigint_scratch(bigint_scratch);
+    return ret;
 }
 
 /*
@@ -2337,9 +2401,10 @@ Dragon4_PrintFloat_IEEE_binary64(
     npy_uint64 mantissa;
     npy_int32 exponent;
     npy_uint32 mantissaBit;
-    static BigInt bgmantissa;
     npy_bool hasUnequalMargins;
     char signbit = '\0';
+    BigInt *bigint_scratch, *bgmantissa;
+    npy_uint32 ret;
 
     if (bufferSize == 0) {
         return 0;
@@ -2409,9 +2474,18 @@ Dragon4_PrintFloat_IEEE_binary64(
         hasUnequalMargins   = NPY_FALSE;
     }
 
-    BigInt_Set_uint64(&bgmantissa, mantissa);
-    return Format_floatbits(buffer, bufferSize, &bgmantissa, exponent,
+    bigint_scratch = get_dragon4_bigint_scratch();
+    if (bigint_scratch == NULL) {
+        return -1;
+    }
+    bgmantissa = &bigint_scratch[0];
+
+    BigInt_Set_uint64(bgmantissa, mantissa);
+    ret = Format_floatbits(buffer, bufferSize, bigint_scratch, exponent,
                             signbit, mantissaBit, hasUnequalMargins, opt);
+
+    free_dragon4_bigint_scratch(bigint_scratch);
+    return ret;
 }
 
 
@@ -2453,9 +2527,10 @@ Dragon4_PrintFloat_Intel_extended(
     npy_uint64 mantissa;
     npy_int32 exponent;
     npy_uint32 mantissaBit;
-    static BigInt bgmantissa;
     npy_bool hasUnequalMargins;
     char signbit = '\0';
+    BigInt *bigint_scratch, *bgmantissa;
+    npy_uint32 ret;
 
     if (bufferSize == 0) {
         return 0;
@@ -2530,9 +2605,18 @@ Dragon4_PrintFloat_Intel_extended(
         hasUnequalMargins   = NPY_FALSE;
     }
 
-    BigInt_Set_uint64(&bgmantissa, mantissa);
-    return Format_floatbits(buffer, bufferSize, &bgmantissa, exponent,
+    bigint_scratch = get_dragon4_bigint_scratch();
+    if (bigint_scratch == NULL) {
+        return -1;
+    }
+    bgmantissa = &bigint_scratch[0];
+
+    BigInt_Set_uint64(bgmantissa, mantissa);
+    ret = Format_floatbits(buffer, bufferSize, bigint_scratch, exponent,
                             signbit, mantissaBit, hasUnequalMargins, opt);
+
+    free_dragon4_bigint_scratch(bigint_scratch);
+    return ret;
 }
 
 #endif /* INTEL_EXTENDED group */
@@ -2676,9 +2760,10 @@ Dragon4_PrintFloat_IEEE_binary128(
     npy_uint64 mantissa_hi, mantissa_lo;
     npy_int32 exponent;
     npy_uint32 mantissaBit;
-    static BigInt bgmantissa;
     npy_bool hasUnequalMargins;
     char signbit = '\0';
+    BigInt *bigint_scratch, *bgmantissa;
+    npy_uint32 ret;
 
     buf128.floatingPoint = *value;
 
@@ -2755,9 +2840,18 @@ Dragon4_PrintFloat_IEEE_binary128(
         hasUnequalMargins   = NPY_FALSE;
     }
 
-    BigInt_Set_2x_uint64(&bgmantissa, mantissa_hi, mantissa_lo);
-    return Format_floatbits(buffer, bufferSize, &bgmantissa, exponent,
+    bigint_scratch = get_dragon4_bigint_scratch();
+    if (bigint_scratch == NULL) {
+        return -1;
+    }
+    bgmantissa = &bigint_scratch[0];
+
+    BigInt_Set_2x_uint64(bgmantissa, mantissa_hi, mantissa_lo);
+    ret = Format_floatbits(buffer, bufferSize, bigint_scratch, exponent,
                             signbit, mantissaBit, hasUnequalMargins, opt);
+
+    free_dragon4_bigint_scratch(bigint_scratch);
+    return ret;
 }
 #endif /* HAVE_LDOUBLE_IEEE_QUAD_LE */
 
@@ -2812,9 +2906,10 @@ Dragon4_PrintFloat_IBM_double_double(
     npy_int32 exponent1, exponent2;
     int shift;
     npy_uint32 mantissaBit;
-    static BigInt bgmantissa;
     npy_bool hasUnequalMargins;
     char signbit = '\0';
+    BigInt *bigint_scratch, *bgmantissa;
+    npy_uint32 ret;
 
     if (bufferSize == 0) {
         return 0;
@@ -2848,6 +2943,11 @@ Dragon4_PrintFloat_IBM_double_double(
     }
 
     /* else this is a number */
+    bigint_scratch = get_dragon4_bigint_scratch();
+    if (bigint_scratch == NULL) {
+        return -1;
+    }
+    bgmantissa = &bigint_scratch[0];
 
     /* Factor the 1st value into its parts, see binary64 for comments. */
     if (floatExponent1 == 0) {
@@ -2861,7 +2961,7 @@ Dragon4_PrintFloat_IBM_double_double(
         mantissaBit          = LogBase2_64(mantissa1);
         hasUnequalMargins    = NPY_FALSE;
 
-        BigInt_Set_uint64(&bgmantissa, mantissa1);
+        BigInt_Set_uint64(bgmantissa, mantissa1);
     }
     else {
         mantissa1            = (1ull << 52) | floatMantissa1;
@@ -2960,13 +3060,16 @@ Dragon4_PrintFloat_IBM_double_double(
          * set up the BigInt mantissa, by shifting the parts as needed
          * We can use | instead of + since the mantissas should not overlap
          */
-        BigInt_Set_2x_uint64(&bgmantissa, mantissa1 >> 11,
+        BigInt_Set_2x_uint64(bgmantissa, mantissa1 >> 11,
                                          (mantissa1 << 53) | (mantissa2));
         exponent1 = exponent1 - 53;
     }
 
-    return Format_floatbits(buffer, bufferSize, &bgmantissa, exponent1,
+    ret = Format_floatbits(buffer, bufferSize, bigint_scratch, exponent1,
                             signbit, mantissaBit, hasUnequalMargins, opt);
+
+    free_dragon4_bigint_scratch(bigint_scratch);
+    return ret;
 }
 
 #if defined(HAVE_LDOUBLE_IBM_DOUBLE_DOUBLE_LE)
@@ -3025,7 +3128,9 @@ PyObject *\
 Dragon4_Positional_##Type##_opt(npy_type *val, Dragon4_Options *opt)\
 {\
     static char repr[16384];\
-    Dragon4_PrintFloat_##format(repr, sizeof(repr), val, opt);\
+    if (Dragon4_PrintFloat_##format(repr, sizeof(repr), val, opt) < 0) {\
+        return NULL;\
+    }\
     return PyUString_FromString(repr);\
 }\
 \
@@ -3053,7 +3158,9 @@ PyObject *\
 Dragon4_Scientific_##Type##_opt(npy_type *val, Dragon4_Options *opt)\
 {\
     static char repr[4096];\
-    Dragon4_PrintFloat_##format(repr, sizeof(repr), val, opt);\
+    if (Dragon4_PrintFloat_##format(repr, sizeof(repr), val, opt) < 0) {\
+        return NULL;\
+    }\
     return PyUString_FromString(repr);\
 }\
 PyObject *\
