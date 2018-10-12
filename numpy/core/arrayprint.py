@@ -473,7 +473,11 @@ def _array2string(a, options, separator=' ', prefix=""):
     # The formatter __init__s in _get_format_function cannot deal with
     # subclasses yet, and we also need to avoid recursion issues in
     # _formatArray with subclasses which return 0d arrays in place of scalars
-    data = asarray(a)
+    if isinstance(a, np.ndarray):
+        data = asarray(a)
+    else:
+        data = a
+
     if a.shape == ():
         a = data
 
@@ -497,17 +501,7 @@ def _array2string(a, options, separator=' ', prefix=""):
     return lst
 
 
-def _array2string_dispatcher(
-        a, max_line_width=None, precision=None,
-        suppress_small=None, separator=None, prefix=None,
-        style=None, formatter=None, threshold=None,
-        edgeitems=None, sign=None, floatmode=None, suffix=None,
-        **kwarg):
-    return (a,)
-
-
-@array_function_dispatch(_array2string_dispatcher)
-def array2string(a, max_line_width=None, precision=None,
+def array2string_impl(a, max_line_width=None, precision=None,
                  suppress_small=None, separator=' ', prefix="",
                  style=np._NoValue, formatter=None, threshold=None,
                  edgeitems=None, sign=None, floatmode=None, suffix="",
@@ -679,6 +673,25 @@ def array2string(a, max_line_width=None, precision=None,
         return "[]"
 
     return _array2string(a, options, separator, prefix)
+
+def _array2string_dispatcher(
+        a, max_line_width=None, precision=None,
+        suppress_small=None, separator=None, prefix=None,
+        style=None, formatter=None, threshold=None,
+        edgeitems=None, sign=None, floatmode=None, suffix=None,
+        **kwarg):
+    return (a,)
+
+
+@array_function_dispatch(_array2string_dispatcher)
+def array2string(a, max_line_width=None, precision=None,
+                 suppress_small=None, separator=' ', prefix="",
+                 style=np._NoValue, formatter=None, threshold=None,
+                 edgeitems=None, sign=None, floatmode=None, suffix="",
+                 **kwarg):
+    return array2string_impl(a, max_line_width, precision, suppress_small, separator,
+                      prefix, style, formatter, threshold, edgeitems, sign,
+                      floatmode, suffix, **kwarg)
 
 
 def _extendLine(s, line, word, line_width, next_line_prefix, legacy):
@@ -1380,14 +1393,7 @@ def dtype_short_repr(dtype):
 
     return typename
 
-
-def _array_repr_dispatcher(
-        arr, max_line_width=None, precision=None, suppress_small=None):
-    return (arr,)
-
-
-@array_function_dispatch(_array_repr_dispatcher)
-def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
+def array_repr_impl(arr, max_line_width=None, precision=None, suppress_small=None):
     """
     Return the string representation of an array.
 
@@ -1450,7 +1456,7 @@ def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
                            ', ', prefix, suffix=suffix)
     else:  # show zero-length shape unless it is (0,)
         lst = "[], shape=%s" % (repr(arr.shape),)
-
+    
     arr_str = prefix + lst + suffix
 
     if skipdtype:
@@ -1471,17 +1477,18 @@ def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
 
     return arr_str + spacer + dtype_str
 
+def _array_repr_dispatcher(
+        arr, max_line_width=None, precision=None, suppress_small=None):
+    return (arr,)
+
+@array_function_dispatch(_array_repr_dispatcher)
+def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
+    return array_repr_impl(arr, max_line_width, precision, suppress_small)
+
 
 _guarded_str = _recursive_guard()(str)
 
-
-def _array_str_dispatcher(
-        a, max_line_width=None, precision=None, suppress_small=None):
-    return (a,)
-
-
-@array_function_dispatch(_array_str_dispatcher)
-def array_str(a, max_line_width=None, precision=None, suppress_small=None):
+def array_str_impl(a, max_line_width=None, precision=None, suppress_small=None):
     """
     Return a string representation of the data in an array.
 
@@ -1529,6 +1536,14 @@ def array_str(a, max_line_width=None, precision=None, suppress_small=None):
         return _guarded_str(np.ndarray.__getitem__(a, ()))
 
     return array2string(a, max_line_width, precision, suppress_small, ' ', "")
+
+def _array_str_dispatcher(
+        a, max_line_width=None, precision=None, suppress_small=None):
+    return (a,)
+
+@array_function_dispatch(_array_str_dispatcher)
+def array_str(a, max_line_width=None, precision=None, suppress_small=None):
+    return array_str_impl(a, max_line_width, precision, suppress_small)
 
 def set_string_function(f, repr=True):
     """
