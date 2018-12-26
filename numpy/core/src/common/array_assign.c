@@ -87,7 +87,6 @@ NPY_NO_EXPORT int
 raw_array_is_aligned(int ndim, npy_intp *shape,
                      char *data, npy_intp *strides, int alignment)
 {
-
     /*
      * The code below expects the following:
      *  * that alignment is a power of two, as required by the C standard.
@@ -125,8 +124,12 @@ raw_array_is_aligned(int ndim, npy_intp *shape,
 
         return npy_is_aligned((void *)align_check, alignment);
     }
-    else {
+    else if (alignment == 1) {
         return 1;
+    }
+    else {
+        /* always return false for alignment == 0, which means unaligned */
+        return 0;
     }
 }
 
